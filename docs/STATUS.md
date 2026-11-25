@@ -119,6 +119,15 @@ See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a
   `GRAWBOX_NATIVE_PROMPT_DUMP=<folder>` writes small textures to find them.
 - The GRAW 1 build had cached the stock SDK's path, so it was not using the patched SDK; `tools/build.ps1` now sets it.
 
+### First real GPU test of the native renderer (tester reports)
+
+- F9 works in both games. Cross-Com works in both. The GRAW 2 horizontal line is gone. GRAW 1 looks good.
+- **GRAW 2: no shadows** from trees, walls or buildings on native.
+- **Textures less sharp** than emulated, mostly at angles and distance, both games.
+- **GRAW 1 stutters a lot**, seemingly on both renderers. Needs longer play.
+- **Haze**: with `native.haze=false` the ghosting is gone but the world looks too flat and clean. Wanted: the haze fixed, or
+  an alternative, rather than removed. Longer term is acceptable.
+
 ## Next
 
 GRAW 2: details of the visual issues. GRAW 1:
