@@ -73,13 +73,14 @@ Updated 2026-11-24.
   main program 0x827927A0 / 0x82792550, AI module 0x8858FFD0 / 0x88587620. Both `.xexp` files must sit
   beside their executables. Started directly, without the front end. No input sent, no mission tried.
 - An "invalid" fetch constant repeats in the log, as in GRAW 1 (a different constant).
-- Jump tables not audited yet. GRAW 1 also has a setjmp-style function (`sub_825AFBD0`), not named yet.
+- Jump tables checked against the loaded updated image: 440 in the campaign and 820 in the AI module, 0 wrong.
+- GRAW 1 has the same setjmp pair (`sub_825AFBD0`, `sub_825AFAB0`), not declared; its identified callers are the shader compiler.
 - `sub_823A56C0` is about 1 MB of generated code. Cause not checked.
-- Its project is still only in `private/`.
+- Tracked in `games/graw2-campaign/`; `tools/build.ps1 -Game graw2` builds it on the patched SDK.
 
 ## Next
 
-GRAW 2: tracked project, jump table audit, start a mission. GRAW 1:
+GRAW 2: play-test on a real GPU. GRAW 1:
 
 the squadmate problem, occlusion queries, squad and drone Cross-Com feeds, loading a save, later missions.
 

@@ -1,0 +1,25 @@
+# GRAW 2 campaign: Yeti_Final_Xenon.xex with title update 0.0.4.1 (title 555307F0), and the AI module
+# it loads. tools/build.ps1 stages the player's own files; nothing from them belongs in this
+# repository.
+
+[project]
+name = "graw2_campaign"
+sdk_version = "0.11.0"
+game_root = "../../private/graw2/campaign"
+hook_sources = ["src"]
+
+[entrypoint]
+file_path = "../../private/graw2/campaign/Yeti_Final_Xenon.xex"
+out_directory_path = "generated/campaign"
+setjmp_address = 0x827927A0
+longjmp_address = 0x82792550
+includes = []
+
+# Without these two the AI module corrupts memory at start.
+[[modules]]
+guest_path = "ai_x360_f.xex"
+file_path = "../../private/graw2/campaign/AI_X360_F.xex"
+out_directory_path = "generated/ai"
+setjmp_address = 0x8858FFD0
+longjmp_address = 0x88587620
+includes = []
