@@ -79,12 +79,14 @@ Updated 2026-11-24.
   missed functions, from tables in the loaded image. Two candidates split functions and were dropped; 14 uncertain ones
   left out. Under WARP it now goes from New Campaign to the mission loading screen, no crash in 120 s; the
   mission itself had not loaded by then.
+- Runs on a real GPU with the fix (tester report). **Ghosting** looks the same as in GRAW 1 and is more noticeable.
+  Other visual issues seen, details not recorded yet.
 - `sub_823A56C0` is about 1 MB of generated code. Cause not checked.
 - Tracked in `games/graw2-campaign/`; `tools/build.ps1 -Game graw2` builds it on the patched SDK.
 
 ## Next
 
-GRAW 2: play-test on a real GPU. GRAW 1:
+GRAW 2: details of the visual issues. GRAW 1:
 
 the squadmate problem, occlusion queries, squad and drone Cross-Com feeds, loading a save, later missions.
 
