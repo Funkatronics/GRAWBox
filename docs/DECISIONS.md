@@ -27,4 +27,5 @@
   instead of porting it to 0.11 or moving the games back. The emulated renderer stays, and stays the default until the
   native one has been tested on a real GPU.
 - **2026-11-25, branches:** work may go to a branch and be pushed there without asking; `main` still needs the owner's approval.
-- **2026-11-25, haze:** kept on by default as the games ask for it, with a setting to turn it off; the owner chooses after seeing it.
+- **2026-11-25, haze:** on by default, as the games ask for it, with a setting to turn it off. Owner's choice.
+- **2026-11-25, Rust:** the owner approved installing rustup with the stable MSVC toolchain for the launcher.
