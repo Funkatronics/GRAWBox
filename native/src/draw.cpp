@@ -69,7 +69,7 @@ REXCVAR_DECLARE(bool, graw_native_pipeline_cache);
 REXCVAR_DECLARE(std::string, graw_native_watch_trace);
 REXCVAR_DECLARE(bool, graw_native_coherency_check);
 REXCVAR_DECLARE(bool, graw_native_implicit_gradients);
-REXCVAR_DECLARE(bool, graw_native_haze);
+REXCVAR_DECLARE(std::string, graw_native_haze);
 REXCVAR_DEFINE_BOOL(graw_native_generic_pipelines, true, "GRAW native",
                     "With --graw_native_async_pipelines, a draw whose bool or texture-sign "
                     "specialization is still compiling uses the pipeline of its unspecialized "
@@ -2671,18 +2671,27 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
   profile::Mark(profile::kSysConst);
 
   // Float constants packed by the shaders' maps (UpdateBindings), compared and staged in place.
-  PackFloats(cb_float_vs, vs, s.regs, XE_GPU_REG_SHADER_CONSTANT_000_X);
-  // The haze pass blurs and doubles the picture by distance / c1.x: far enough away, it is gone.
-  static const bool haze = REXCVAR_GET(graw_native_haze);
-  uint32_t* haze_range = nullptr;
-  uint32_t haze_range_value = 0;
-  if (!haze && ps && IsHazeShader(ps->ucode_data_hash())) {
-    haze_range = const_cast<uint32_t*>(&s.regs[XE_GPU_REG_SHADER_CONSTANT_256_X + 4]);
-    haze_range_value = *haze_range;
-    *haze_range = 0x7149F2CAu;  // 1e30
+  // The haze pass mixes in a blurred copy and one displaced by c10.xy of the vertex shader, by
+  // distance / c1.x of the pixel shader. "soft": no displaced copy, and less of the blur; "off":
+  // the distance so large that nothing is mixed in.
+  static const std::string haze = REXCVAR_GET(graw_native_haze);
+  if (haze != "on" && ps && IsHazeShader(ps->ucode_data_hash())) {
+    uint32_t* const range = const_cast<uint32_t*>(&s.regs[XE_GPU_REG_SHADER_CONSTANT_256_X + 4]);
+    uint32_t* const shift =
+        const_cast<uint32_t*>(&s.regs[XE_GPU_REG_SHADER_CONSTANT_000_X + 10 * 4]);
+    const uint32_t old_range = *range, old_shift[2] = {shift[0], shift[1]};
+    *range = haze == "soft" ? std::bit_cast<uint32_t>(std::bit_cast<float>(old_range) * 2.5f)
+                            : 0x7149F2CAu;  // 1e30
+    shift[0] = shift[1] = 0;
+    PackFloats(cb_float_vs, vs, s.regs, XE_GPU_REG_SHADER_CONSTANT_000_X);
+    PackFloats(cb_float_ps, ps, s.regs, XE_GPU_REG_SHADER_CONSTANT_256_X);
+    *range = old_range;
+    shift[0] = old_shift[0];
+    shift[1] = old_shift[1];
+  } else {
+    PackFloats(cb_float_vs, vs, s.regs, XE_GPU_REG_SHADER_CONSTANT_000_X);
+    PackFloats(cb_float_ps, ps, s.regs, XE_GPU_REG_SHADER_CONSTANT_256_X);
   }
-  PackFloats(cb_float_ps, ps, s.regs, XE_GPU_REG_SHADER_CONSTANT_256_X);
-  if (haze_range) *haze_range = haze_range_value;
   profile::Mark(profile::kPack);
 
   // Vertex data and indices into shared memory (made by Prepare with `prep`).

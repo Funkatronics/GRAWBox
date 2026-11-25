@@ -105,7 +105,7 @@ See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a
   clears of the same EDRAM tiles reset: done in `RenderTargets::FillDepths`.
 - **Ghosting explained**: the last pass of both games (`CFC1BD3557C8B735`, `F17045F9B4E36E54`) mixes the picture, by
   1 / depth / 1000, with a blurred 256x200 copy and a copy displaced by sines of time (about 1.3 pixels at 720p). Same
-  constants in both games, so it is the games' own haze, drawn as they ask. `native.haze=false` removes it: in the same GRAW 2
+  constants in both games, so it is the games' own haze, drawn as they ask. `native.haze=off` removes it: in the same GRAW 2
   frame the distant towers and signs are then sharp. Whether the console looked the same was not compared.
 - **F9** switches both ways in the GRAW 1 menu on WARP.
 - **Cross-Com may be broken on it in GRAW 1** (tester report, watching a WARP run). Not settled: at seconds per frame the
@@ -124,15 +124,16 @@ See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a
 - F9 works in both games. Cross-Com works in both. The GRAW 2 horizontal line is gone. GRAW 1 looks good.
 - **GRAW 2: no shadows** from trees, walls or buildings on native. Cause: its variance shadow map resolves `k_16_16` with
   exponent bias -5 to unsigned texels; the resolve stored signed bits without the format's factor of 32. Fixed in
-  `resolve.cpp`; shadows now draw on WARP. **Not finished**: straight vertical shadow edges cross road and walls in the
-  tutorial (x about 180 and 715 of 1280). Cause not known. A resolve dump (`GRAWBOX_NATIVE_RESOLVE_DUMP`) showed cascades 0
-  and 1 nearly empty, but in an intro frame, so it must be repeated at the player's position.
+  `resolve.cpp`; then the world's shaders read the
+  shadow mask at the wrong place: the game loads c104/c105 once per screen tile (predicated), and the last tile's was kept. The
+  tracker now takes the first tile's. Tree, building and prop shadows look right on WARP at 1x and 2x; not yet seen on a real GPU.
 - **Textures less sharp** than emulated, mostly at angles and distance, both games. `native.anisotropy` now defaults to 16
   (was 1); not compared yet. Wanted: filtering levels as a player setting.
 - **Wanted**: other visual options, such as ambient occlusion (COGBox has it). Not looked into yet.
 - **GRAW 1 stutters a lot**, seemingly on both renderers. Needs longer play.
-- **Haze**: with `native.haze=false` the ghosting is gone but the world looks too flat and clean. Wanted: the haze fixed, or
-  an alternative, rather than removed. Longer term is acceptable.
+- **Haze**: with `native.haze=off` the ghosting is gone but the world looks too flat and clean. Wanted: the haze fixed, or
+  an alternative, rather than removed. `native.haze=soft` now keeps a weaker blur without the displaced double; not judged yet.
+  A real fix would be a blur that respects depth, at the draw resolution.
 
 ## Next
 

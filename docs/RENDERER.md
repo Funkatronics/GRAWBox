@@ -15,7 +15,7 @@ to switch while playing.
   interrupts) without drawing or presenting (`patches/rexglue-0.11.0-host-renderer.patch`).
 - It presents into a child window over the game window, because a window takes one flip swap chain.
 - `native.renderer` = `native`, `emulated` (default) or `off`. **F9** switches while playing.
-  `native.resolution_scale` = 1 to 3. `native.vsync`.
+  `native.resolution_scale` = 1 to 3. `native.vsync`. `native.anisotropy` = 1 to 16. `native.haze` = on, soft, off.
 - Adds over the sources it came from: `k_CTX1` textures and resolves to `k_16_16`, which GRAW 2 uses.
 
 ## Limits known
