@@ -57,7 +57,7 @@ Updated 2026-11-24.
   frame rate, and with occlusion queries off. Squad orders still work. graw360 #7, open there. Also
   appeared at 3x (4K), 60 fps while the game was left idle, with no explosion. Needs more testing. Cause not known.
 - **Ghosting around some geometry**, most visible in motion; noticed on a palm tree against the sky in an outdoor
-  mission. Seen at 3x (4K), 60 fps, fullscreen. Also clear as
+  mission. Seen at 3x (4K), 60 fps, fullscreen, and at 1x. Also clear as
   a soft halo around the player's head and shoulders against the sky. Cause not known.
 - **Dark polygon in the sky** (helicopter scene): a large straight-edged darker area that moves with the view.
   Looks like part of the sky clipped away. Untested idea: the missing `force_depth_clamp` setting, which Xenia Canary's
