@@ -346,6 +346,9 @@ void GuestStateTracker::HandlePacket(const uint8_t* base) {
       break;
     case 0x2F: {  // LOAD_ALU_CONSTANT: from guest memory, as it is now
       if (pkt_.size() < 3) break;
+      // Loaded once per tile, each for its bins: GRAW 2's shaders add the tile's place to the pixel
+      // position (c104 and c105). The first tile's values are the untiled ones.
+      if (predicated && !(bin_mask_ & 1)) break;
       const uint32_t address = pkt_[0] & 0x3FFFFFFF, index = pkt_[1] & 0x7FF,
                      kind = (pkt_[1] >> 16) & 0xFF, n = pkt_[2] & 0xFFF;
       if (kind < std::size(kConstantBase) && n)
@@ -413,9 +416,13 @@ void GuestStateTracker::HandlePacket(const uint8_t* base) {
     case 0x59:  // EVENT_WRITE_CFL
     case 0x5A:  // EVENT_WRITE_EXT
     case 0x5B:  // EVENT_WRITE_ZPD
-    case 0x50:  // SET_BIN_MASK
-    case 0x51:  // SET_BIN_SELECT
+    case 0x50:  // SET_BIN_MASK: high, low
+      if (pkt_.size() >= 2) bin_mask_ = pkt_[1];
+      break;
     case 0x60:  // SET_BIN_MASK_LO
+      if (!pkt_.empty()) bin_mask_ = pkt_[0];
+      break;
+    case 0x51:  // SET_BIN_SELECT
     case 0x61:
     case 0x62:
     case 0x63:

@@ -179,6 +179,7 @@ class GuestStateTracker {
   bool current_entry_ = false;     // ... at its entry (packets written before it)
   uint32_t last_sync_thread_ = 0;  // and its thread
   // Decoder.
+  uint32_t bin_mask_ = ~0u;  // the tiles' bins that predicated packets are for (low half)
   bool in_packet_ = false;
   uint32_t header_ = 0, need_ = 0, packet_address_ = 0;
   std::vector<uint32_t> pkt_;  // host order
