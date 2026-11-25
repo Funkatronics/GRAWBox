@@ -85,8 +85,10 @@ Updated 2026-11-24.
   present, so no haze-free area has been checked. Ghosting and blur increase with distance. Either the haze effect or
   something downstream of it. Code cause not known.
   Other visual issues seen, details not recorded yet.
-- **Thin black horizontal line** across the screen, roughly 30% of the height from the bottom. Drawn over the
-  character and terrain but not over the sky. Cause not known.
+- **Thin horizontal line** across the screen, roughly 30% of the height from the bottom, over the character and terrain
+  but not the sky. Not black: the tester describes a row of pixels where shadows seem not to be drawn, with its
+  color following what is behind it. In one capture it sits at row 512 of 720, which would be a boundary between
+  256-row tiles. Tile seam suspected, not proven. Seen at 3x; 1x not checked.
 - `sub_823A56C0` is about 1 MB of generated code. Cause not checked.
 - Tracked in `games/graw2-campaign/`; `tools/build.ps1 -Game graw2` builds it on the patched SDK.
 
