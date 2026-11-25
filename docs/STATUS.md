@@ -16,14 +16,19 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
 
 - **GRAW 1: flicker and corrupted graphics while paused**, started by switching to another window; stays after returning and
   ends when unpausing (tester). Not reproduced on WARP: pausing, minimizing, restoring and changing focus, windowed and
-  fullscreen, stayed clean. The paused game redraws its whole scene, so the post-processing does not add up.
+  fullscreen, stayed clean. Not seen in GRAW 2. It stops while the snipping tool is open, so there is no capture. The
+  tester's log shows the paused game drawing steadily at 60 fps, with the game thread's wait for the renderer dropping
+  from 13 ms to under 0.3 ms partway through the pause. Suspects: a race between the threads, the post-processing, the
+  presents; the `FLICKER-*` test scripts each rule one out.
 - **GRAW 1: shadow triangles in the air** by some barrels, seen in one run and not again; not on emulated then. Transient.
 - **One GRAW 1 squadmate loses weapon, outline and marker** together. Not frame rate or occlusion queries. graw360 #7.
 - **GRAW 1 world went mostly black** once, late in the first mission, on the emulated renderer. Cause not known.
 - **GRAW 1: dark polygon in the sky** (helicopter scene), on the emulated renderer. Not checked on native.
 - GRAW 1 hitches: need longer and repeated play.
-- Keyboard and mouse: new default keys (`grawbox-keys-classic.txt` is the first scheme), hidden pointer, wheel as keys; the
-  new keys are not judged yet. The mouse does nothing in menus. Grenades have no key of their own (B's inventory).
+- Keyboard and mouse: keys 1 and 2 are d-pad left and right (the tester's choice), 3 and 4 up and down, Q weapons, Tab map.
+  Wanted: 1, 2 and G going straight to the primary weapon, secondary and grenades, and one key that cycles all Cross-Com
+  assets; the games' lists do not wrap, so both need the games' own state. The mouse does nothing in menus.
+  B held and the d-pad scroll the weapons; a tap goes back to the last. There is no sprint.
 - GRAW 1 prompts still showing the pad: X, Y, triggers, BACK, in-text icons.
 - Native renderer: no occlusion queries (a fixed count is reported); Vulkan not brought over; system dialogs not tested.
 - Not tested: drone and squad feeds beyond the first mission, loading GRAW 1 saves, later missions, returning to the front end.
