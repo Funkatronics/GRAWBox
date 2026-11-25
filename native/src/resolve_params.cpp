@@ -93,6 +93,7 @@ int DestBppLog2(uint32_t f) {
       return 1;
     case xenos::TextureFormat::k_8_8_8_8:
     case xenos::TextureFormat::k_2_10_10_10:
+    case xenos::TextureFormat::k_16_16:
     case xenos::TextureFormat::k_16_16_FLOAT:
     case xenos::TextureFormat::k_32_FLOAT:
       return 2;
@@ -227,8 +228,7 @@ bool DecodeResolve(const uint8_t* base, const HookArgs& args, ResolveParams* out
     if (color_ptr) {
       for (int i = 0; i < 4; ++i) p.clear_color[i] = LoadFloat(base, color_ptr + 4 * i);
     } else {
-      const float c = LoadFloat(base, 0x82000744u);
-      for (float& v : p.clear_color) v = c;
+      for (float& v : p.clear_color) v = 0.0f;  // the Resolve's own default
     }
     p.clear_depth = float(args.f[0]);
     p.clear_stencil = uint8_t(Load32(base, args.sp + 92));

@@ -107,6 +107,7 @@ const DestStorage* GetDestStorage(uint32_t f) {
       return &k8888;
     case xenos::TextureFormat::k_2_10_10_10:
       return &k2101010;
+    case xenos::TextureFormat::k_16_16:
     case xenos::TextureFormat::k_16_16_FLOAT:
       return &k16_16f;
     case xenos::TextureFormat::k_32_FLOAT:
@@ -186,6 +187,7 @@ uint HostSample(uint s) {
 }
 
 uint U(float v, float scale) { return (uint)(saturate(v) * scale + 0.5); }
+uint S16(float v) { return ((uint)(int)round(clamp(v, -1.0, 1.0) * 32767.0)) & 0xFFFF; }
 uint S8(float v) { return ((uint)(int)round(clamp(v, -1.0, 1.0) * 127.0)) & 0xFF; }
 
 // Xenia xenos::Float32To20e4 truncating, as ReXGlue's EDRAM store of host D32 depth
@@ -269,6 +271,8 @@ uint4 PackDest(float4 c) {
       return uint4(U(c.r, 255.0) | (U(c.g, 255.0) << 8) | (U(c.b, 255.0) << 16) | (U(c.a, 255.0) << 24), 0, 0, 0);
     case 7u:                                                                         // k_2_10_10_10
       return uint4(U(c.r, 1023.0) | (U(c.g, 1023.0) << 10) | (U(c.b, 1023.0) << 20) | (U(c.a, 3.0) << 30), 0, 0, 0);
+    // k_16_16: the EDRAM's bits. The host target holds its -32...32 as -1...1, like the texel.
+    case 25u: return uint4(S16(c.r) | (S16(c.g) << 16), 0, 0, 0);
     case 30u: return uint4(f32tof16(c.r), 0, 0, 0);
     case 31u: return uint4(f32tof16(c.r) | (f32tof16(c.g) << 16), 0, 0, 0);
     case 32u: return uint4(f32tof16(c.r) | (f32tof16(c.g) << 16), f32tof16(c.b) | (f32tof16(c.a) << 16), 0, 0);

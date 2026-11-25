@@ -70,6 +70,8 @@ enum class TextureConversion : uint8_t {
   // holds these as normalized integers).
   kR11G11B10ToRGBA16,  // k_10_11_11: R bits 0-10, G 11-21, B 22-31
   kR10G11B11ToRGBA16,  // k_11_11_10: R bits 0-9, G 10-20, B 21-31
+  // Decompressing: one 8-byte guest block to 4x4 R8G8 texels, as ReXGlue's ConvertTexelCTX1ToR8G8.
+  kCTX1ToR8G8,
 };
 
 struct HostFormat {

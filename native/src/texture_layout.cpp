@@ -141,6 +141,10 @@ constexpr FormatEntry kFormats[] = {
       DXGI_FORMAT_R32G32B32A32_FLOAT, C::kCopy, false, kRGBA}},
     {TextureFormat::k_DXN,
      {DXGI_FORMAT_BC5_UNORM, DXGI_FORMAT_BC5_UNORM, DXGI_FORMAT_UNKNOWN, C::kCopy, true, kRGGG}},
+    // GRAW 2's normal maps.
+    {TextureFormat::k_CTX1,
+     {DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_R8G8_UNORM, DXGI_FORMAT_UNKNOWN, C::kCTX1ToR8G8, false,
+      kRGGG}},
     // GRAW: a 256x256 k_10_11_11 lookup in the campaign's lighting (missing, shadowed surfaces
     // lost their ambient light). Unsigned only: ReXGlue's signed load is not ported.
     {TextureFormat::k_10_11_11,
@@ -203,11 +207,35 @@ void Expand(TextureConversion conversion, const uint8_t* in, uint8_t* out, uint3
   }
 }
 
+// A row of `columns` CTX1 blocks to the `rows` (1 to 4) texel rows of `width` R8G8 texels it covers.
+void DecodeCTX1(const uint8_t* in, uint32_t columns, uint8_t* out, uint32_t row_pitch,
+                uint32_t width, uint32_t rows) {
+  for (uint32_t x = 0; x < columns; ++x) {
+    const uint8_t* b = in + size_t(x) * 8;
+    const uint32_t g0 = b[0], r0 = b[1], g1 = b[2], r1 = b[3];
+    const uint8_t r[4] = {uint8_t(r0), uint8_t(r1), uint8_t((2 * r0 + r1) / 3),
+                          uint8_t((r0 + 2 * r1) / 3)};
+    const uint8_t g[4] = {uint8_t(g0), uint8_t(g1), uint8_t((2 * g0 + g1) / 3),
+                          uint8_t((g0 + 2 * g1) / 3)};
+    uint32_t bits;
+    std::memcpy(&bits, b + 4, 4);
+    for (uint32_t ty = 0; ty < rows; ++ty) {
+      for (uint32_t tx = 0; tx < 4 && x * 4 + tx < width; ++tx) {
+        const uint32_t i = (bits >> ((ty * 4 + tx) * 2)) & 3;
+        uint8_t* d = out + size_t(ty) * row_pitch + size_t(x * 4 + tx) * 2;
+        d[0] = r[i];
+        d[1] = g[i];
+      }
+    }
+  }
+}
+
 void Convert(TextureConversion conversion, uint8_t* row, uint32_t bytes) {
   switch (conversion) {
     case C::kCopy:
     case C::kR11G11B10ToRGBA16:  // Expand
     case C::kR10G11B11ToRGBA16:
+    case C::kCTX1ToR8G8:  // DecodeCTX1
       return;
     case C::kR5G6B5ToB5G6R5:
       for (uint32_t i = 0; i + 2 <= bytes; i += 2) {
@@ -338,7 +366,9 @@ uint64_t GetHostFootprints(const TextureKey& key, bool d3d12_placement,
   uint32_t bw = host->block_compressed ? info->block_width : 1;
   uint32_t bh = host->block_compressed ? info->block_height : 1;
   // Host bytes per block: the guest ones, doubled for the expanding conversions.
-  uint32_t bpb = info->bytes_per_block() * host->expand;
+  uint32_t bpb = host->conversion == TextureConversion::kCTX1ToR8G8
+                     ? 2
+                     : info->bytes_per_block() * host->expand;
   uint64_t offset = 0;
   for (uint32_t slice = 0; slice < key.array_size(); ++slice) {
     for (uint32_t level = 0; level <= key.mip_max_level; ++level) {
@@ -391,10 +421,11 @@ bool UntileTexture(const TextureKey& key, const texture_util::TextureGuestLayout
   size_t mips_size = std::min<size_t>(memory.mips ? memory.mips_size : 0,
                                       key.mip_page ? layout.mips_total_extent_bytes : 0);
   const bool convert = host->conversion != TextureConversion::kCopy;
+  const bool ctx1 = host->conversion == TextureConversion::kCTX1ToR8G8;
   size_t row_scratch = 0;
   if (convert)
     for (const HostSubresource& s : subresources)
-      row_scratch = std::max<size_t>(row_scratch, s.row_bytes);
+      row_scratch = std::max<size_t>(row_scratch, ctx1 ? (s.width + 3) / 4 * bpb : s.row_bytes);
   scratch->resize(base_size + mips_size + row_scratch);
   uint8_t* base = scratch->data();
   uint8_t* mips = base + base_size;
@@ -430,23 +461,25 @@ bool UntileTexture(const TextureKey& key, const texture_util::TextureGuestLayout
     // Blocks contiguous in tiled 2D memory along X (texture_util.h): 8 at 1 byte per block,
     // otherwise 16 bytes' worth, starting at a multiple of the run length. 3D tiling: per block.
     const uint32_t tiled_run = is_3d ? 1 : (bpb == 1 ? 8 : std::max(16u / bpb, 1u));
+    const uint32_t columns = ctx1 ? (s.width + 3) / 4 : s.block_columns;
+    const uint32_t rows = ctx1 ? (s.height + 3) / 4 : s.block_rows;
     for (uint32_t z = 0; z < s.depth; ++z) {
-      for (uint32_t y = 0; y < s.block_rows; ++y) {
-        uint8_t* const row_out = out + (size_t(z) * s.block_rows + y) * s.row_pitch;
+      for (uint32_t y = 0; y < rows; ++y) {
+        uint8_t* const row_out = out + (size_t(z) * s.block_rows + (ctx1 ? y * 4 : y)) * s.row_pitch;
         uint8_t* const row = convert ? row_tmp : row_out;
         const uint32_t gy = oy + y, gz = oz + z;
-        for (uint32_t x = 0; x < s.block_columns;) {
+        for (uint32_t x = 0; x < columns;) {
           const uint32_t gx = ox + x;
           uint32_t run;
           int64_t off;
           if (key.tiled) {
-            run = gx % tiled_run ? 1 : std::min(tiled_run, s.block_columns - x);
+            run = gx % tiled_run ? 1 : std::min(tiled_run, columns - x);
             off = is_3d ? texture_util::GetTiledOffset3D(int32_t(gx), int32_t(gy), int32_t(gz),
                                                          pitch_blocks, z_rows, bpb_log2)
                         : texture_util::GetTiledOffset2D(int32_t(gx), int32_t(gy), pitch_blocks,
                                                          bpb_log2);
           } else {
-            run = s.block_columns - x;
+            run = columns - x;
             off = (int64_t(gz) * z_rows + gy) * row_pitch + int64_t(gx) * bpb;
           }
           off += int64_t(level_offset);
@@ -468,14 +501,16 @@ bool UntileTexture(const TextureKey& key, const texture_util::TextureGuestLayout
           }
           x += run;
         }
-        if (host->expand > 1) {
+        if (ctx1) {
+          DecodeCTX1(row, columns, row_out, s.row_pitch, s.width, std::min(4u, s.height - y * 4));
+        } else if (host->expand > 1) {
           // The row was built at the guest's bytes per block in scratch.
           Expand(host->conversion, row, row_out, s.block_columns);
         } else if (convert) {
           Convert(host->conversion, row, s.row_bytes);
           std::memcpy(row_out, row, s.row_bytes);
         }
-        st.blocks += s.block_columns;
+        st.blocks += columns;
       }
     }
   }

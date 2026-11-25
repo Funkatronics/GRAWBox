@@ -23,3 +23,6 @@
   there. No images in the repository itself.
 - **2026-11-24, feature order:** first get everything working, including visual bugs that are always present (the
   horizontal line, ghosting). Then mouse and keyboard and/or button remapping, with correct in-game button prompts.
+- **2026-11-24, native renderer:** its own library with a C interface, built against the SDK version it was written for,
+  instead of porting it to 0.11 or moving the games back. The emulated renderer stays, and stays the default until the
+  native one has been tested on a real GPU.

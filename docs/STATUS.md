@@ -94,6 +94,16 @@ Updated 2026-11-24.
 - `sub_823A56C0` is about 1 MB of generated code. Cause not checked.
 - Tracked in `games/graw2-campaign/`; `tools/build.ps1 -Game graw2` builds it on the patched SDK.
 
+## Native renderer
+
+See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a real GPU yet.
+
+- **GRAW 1**: menu at 1x, 2x and 3x, and the first mission at 1x, draw on it: world, shadows, characters and HUD. The
+  emulated renderer gives a black world on WARP, so WARP can now be used to look at 3D.
+- **GRAW 2**: boots, loads a mission and draws the opening scene with its video panel, at 1x. 2x and 3x in a mission not tried.
+- **Cross-Com may be broken on it in GRAW 1** (tester report). The narration panel opens and stays grey.
+- The GRAW 1 build had cached the stock SDK's path, so it was not using the patched SDK; `tools/build.ps1` now sets it.
+
 ## Next
 
 GRAW 2: details of the visual issues. GRAW 1:

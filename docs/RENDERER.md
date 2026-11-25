@@ -4,20 +4,31 @@ Goal: draw each game draw once, at any resolution, from the games' own Direct3D 
 emulating the console GPU's command stream and its strips. Both renderers stay selectable, with a key
 to switch while playing.
 
-## Base
+## Design
 
-- fear360-recomp `port-nx/src/d3d12` (MIT, with ReXGlue and Xenia BSD parts): the pgr4-native and graw360
-  lineage, D3D12 and Vulkan, with 1x to 3x resolution scale on D3D12. Front end: graw360-recomp `native/`
-  (MIT). Neither project's GPL folders are used.
-- Those sources are written for ReXGlue `bd833a2`; the games run on 0.11. Planned shape: the renderer as its own
-  library with a small C interface (guest memory, window, hook arguments, log), holding the SDK's shader
-  translator sources it needs, so the two SDK versions never share symbols.
+- `native/` is graw360-recomp's renderer (MIT), with the 1x to 3x drawing merged from fear360-recomp's copy of it
+  (MIT). No project's GPL folders are used. D3D12 only for now; the Vulkan backend is not brought over yet.
+- It is `grawbox_native.dll`, built with the shader translator of ReXGlue `bd833a2` (`native/fetch.ps1`), so that SDK
+  and 0.11 never share symbols. The C interface is `native/include/grawbox_native.h`; the host side is
+  `games/common/`; each game has `src/native_hooks.cpp` with its addresses and device layout.
+- The game's own function always runs first. While native draws, the emulated GPU still runs packets (fences,
+  interrupts) without drawing or presenting (`patches/rexglue-0.11.0-host-renderer.patch`).
+- It presents into a child window over the game window, because a window takes one flip swap chain.
+- `native.renderer` = `native`, `emulated` (default) or `off`. **F9** switches while playing.
+  `native.resolution_scale` = 1 to 3. `native.vsync`.
+- Adds over the sources it came from: `k_CTX1` textures and resolves to `k_16_16`, which GRAW 2 uses.
+
+## Limits known
+
+- A scaled resolve is used only by a texture of exactly its size; others get the 1x copy.
+- No occlusion queries (a fixed count is reported).
+- System dialogs need the SDK's presenter: the child window hides while one is open. Not tested.
 
 ## Guest Direct3D functions
 
 `tools/match_functions.py` against graw360's addresses in the unpatched GRAW 1. GRAW 1 entries match
-exactly, or by instruction shape (marked s). GRAW 2 entries are the closest match only and must be read
-before use, except where marked x (matches exactly or by shape).
+exactly, or by instruction shape (marked s); the s entries differ only in addresses of data, so GRAW 1's device layout
+is the unpatched one. GRAW 2 entries are the closest match (x: exactly or by shape), read in its code and in use.
 
 | Function | GRAW 1 0.0.2.1 | GRAW 2 0.0.4.1 |
 |---|---|---|
