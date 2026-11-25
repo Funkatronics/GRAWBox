@@ -55,6 +55,8 @@ Updated 2026-11-24.
   runs much better, and 60 fps at 3x (4K) runs well, both with queries on. Tester reports; not measured.
 - **One squadmate loses weapon, outline and marker** together. Seen at 60 Hz and at 30 Hz, so it is not
   frame rate, and with occlusion queries off. Squad orders still work. graw360 #7, open there. Cause not known.
+- **Ghosting around some geometry**, most visible in motion; noticed on a palm tree against the sky in an outdoor
+  mission. Cause not known. Render scale of that run not recorded.
 - **Dark polygon in the sky** (helicopter scene): a large straight-edged darker area that moves with the view.
   Looks like part of the sky clipped away. Untested idea: the missing `force_depth_clamp` setting, which Xenia Canary's
   tracker marks as required for this game. graw360 #32 is similar. Minor.
