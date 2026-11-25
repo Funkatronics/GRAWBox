@@ -35,12 +35,14 @@ Updated 2026-11-24.
   boot to the menu. Translate before CMake configures, or the sources are left out.
 - **Play-test on a real GPU (Release build): the tutorial runs and the 3D world renders.** So the black
   scene was specific to WARP; do not judge 3D on WARP. Performance is poor (emulated GPU, not measured).
-- **HUD noise:** the border, the top-left icons and the minimap box show scrambled texture data; the
-  tester sees the same in Xenia Canary. Matches graw360 issue #1 (resolve into freed memory leaves HUD
-  textures stale on the GPU). Its fix is not in SDK 0.11 (`SharedMemory::MarkRangeValid` in
-  `src/gpu/xenos/shared_memory.cpp`). Ported in `patches/`; the patched
-  SDK builds and GRAW 1 boots on it. Effect on the HUD not confirmed yet (needs a real GPU).
-- Cross-Com and tactical map on a real GPU: not reported yet.
+- **HUD noise fixed, confirmed on a real GPU.** `patches/rexglue-0.11.0-freed-page-resolve.patch` (graw360
+  issue #1: a resolve into freed memory left HUD textures stale) cleared the border, icons and minimap
+  box. The video tile where speakers appear also shows correctly. No visual issues seen in the tutorial.
+- Runs at 60 fps in the tutorial (the console ran at 30). Sharp frame time spikes. Those runs had no shader cache:
+  `app.cache_root` is empty by default, which keeps none. Effect of enabling it not tested yet.
+- graw360 reports that game logic breaks above about 30 fps (vanishing weapons, squad orders, rally
+  point). Not checked here. `ui.video_mode_refresh_rate=30` is the setting to compare with.
+- Tactical map not reported yet.
 ## GRAW 2 campaign
 
 - Disc (1,811 files) and title update extracted; update blocks hash-checked.
@@ -59,7 +61,7 @@ Updated 2026-11-24.
 
 GRAW 2: tracked project, jump table audit, start a mission. GRAW 1:
 
-confirm the HUD texture fix on a real GPU, then check Cross-Com and the tactical map.
+frame time spikes, frame rate and game logic, the tactical map, later missions.
 
 ## Not verified
 

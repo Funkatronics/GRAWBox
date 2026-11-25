@@ -18,3 +18,4 @@
   estimate porting graw360's native renderer; fall back to the older SDK build if too costly.
 - **2026-11-24, repository:** public, named GRAWBox, all of `docs/` published. Short one-line commit messages. Local
   commits at milestones; pushes need the owner's approval. `tools/check_commit.py` runs on each commit.
+- **2026-11-24, launcher language:** the owner prefers Rust. To be settled when the Windows launcher starts.
