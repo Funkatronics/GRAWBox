@@ -1,5 +1,6 @@
 # Translates and builds a game program from the owner's extracted files.
 #   tools/build.ps1 -Game graw1|graw2 [-Config Release|RelWithDebInfo|Debug] [-Sdk <folder>]
+#                   [-SdkSource <rexglue-sdk clone>]   also builds the native renderer
 # Needs Visual Studio C++ tools, the portable tools in .tools/, and the disc and title update
 # extracted with tools/x360_extract.py to private/<game>/disc and private/<game>/update.
 # The default SDK is .tools/rexglue-grawbox: v0.11.0 with patches/ applied, Release only.
@@ -7,7 +8,8 @@
 param(
     [Parameter(Mandatory)][ValidateSet('graw1', 'graw2')][string]$Game,
     [ValidateSet('Release', 'RelWithDebInfo', 'Debug')][string]$Config = 'Release',
-    [string]$Sdk
+    [string]$Sdk,
+    [string]$SdkSource
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -45,4 +47,17 @@ cmake -S $project -B $build -G 'Ninja Multi-Config' "-DCMAKE_CXX_COMPILER=$llvm\
     "-DCMAKE_PREFIX_PATH=$Sdk" "-Drexglue_DIR=$Sdk\lib\cmake\rexglue"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 cmake --build $build --config $Config
-exit $LASTEXITCODE
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+# The native renderer, beside the program. Without its sources (native/fetch.ps1) the program still
+# runs, on the emulated renderer.
+if ($SdkSource -and (Test-Path (Join-Path $tools 'rexglue-bd833a2'))) {
+    $native = Join-Path $root 'native'
+    cmake -S $native -B "$native\out\build" -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_CXX_COMPILER=$llvm\clang++.exe" `
+        "-DGRAWBOX_THIRDPARTY=$($SdkSource.Replace('\', '/'))/thirdparty"
+    if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    cmake --build "$native\out\build"
+    if ($LASTEXITCODE) { exit $LASTEXITCODE }
+    Copy-Item "$native\out\build\grawbox_native.dll" (Join-Path $build $Config) -Force
+}
+exit 0

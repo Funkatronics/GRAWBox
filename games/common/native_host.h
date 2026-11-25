@@ -18,6 +18,10 @@ class NativeSettings : public rex::SettingOwner {
               rex::Allowed("native", "emulated", "off"), rex::kRestart);
   REX_SETTING(rex::i32, resolution_scale, 1, "Resolution scale of the native renderer",
               rex::Range{1, 3}, rex::kRestart);
+  REX_SETTING(bool, haze, true,
+              "The games' distance haze, which blurs and doubles what is far away", rex::kRestart);
+  REX_SETTING(rex::i32, anisotropy, 1, "Anisotropic texture filtering, 1 for the game's own",
+              rex::Range{1, 16}, rex::kRestart);
   REX_SETTING(bool, vsync, true, "Wait for the display when the native renderer presents",
               rex::kRestart);
 };

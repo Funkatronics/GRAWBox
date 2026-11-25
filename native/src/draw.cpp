@@ -69,6 +69,7 @@ REXCVAR_DECLARE(bool, graw_native_pipeline_cache);
 REXCVAR_DECLARE(std::string, graw_native_watch_trace);
 REXCVAR_DECLARE(bool, graw_native_coherency_check);
 REXCVAR_DECLARE(bool, graw_native_implicit_gradients);
+REXCVAR_DECLARE(bool, graw_native_haze);
 REXCVAR_DEFINE_BOOL(graw_native_generic_pipelines, true, "GRAW native",
                     "With --graw_native_async_pipelines, a draw whose bool or texture-sign "
                     "specialization is still compiling uses the pipeline of its unspecialized "
@@ -267,6 +268,12 @@ struct CachedCbv {
 // Float constants packed by a shader's constant_register_map (UpdateBindings) straight into
 // `cb.last`, compared with what was there on the way (one register = 16 bytes = one SSE
 // load/store, no calls); 16 zero bytes for no shader or no constants (a CBV needs some data).
+// The games' distance haze: the final picture's mix with its blurred and displaced copies.
+bool IsHazeShader(uint64_t ucode_hash) {
+  return ucode_hash == 0xCFC1BD3557C8B735ull ||  // GRAW 1
+         ucode_hash == 0xF17045F9B4E36E54ull;   // GRAW 2
+}
+
 void PackFloats(CachedCbv& cb, const DxbcShader* shader, const uint32_t* regs, uint32_t reg_base) {
   const Shader::ConstantRegisterMap* map = shader ? &shader->constant_register_map() : nullptr;
   const uint32_t n = map ? map->float_count : 0;  // the bitmap's population count
@@ -2665,7 +2672,17 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
 
   // Float constants packed by the shaders' maps (UpdateBindings), compared and staged in place.
   PackFloats(cb_float_vs, vs, s.regs, XE_GPU_REG_SHADER_CONSTANT_000_X);
+  // The haze pass blurs and doubles the picture by distance / c1.x: far enough away, it is gone.
+  static const bool haze = REXCVAR_GET(graw_native_haze);
+  uint32_t* haze_range = nullptr;
+  uint32_t haze_range_value = 0;
+  if (!haze && ps && IsHazeShader(ps->ucode_data_hash())) {
+    haze_range = const_cast<uint32_t*>(&s.regs[XE_GPU_REG_SHADER_CONSTANT_256_X + 4]);
+    haze_range_value = *haze_range;
+    *haze_range = 0x7149F2CAu;  // 1e30
+  }
   PackFloats(cb_float_ps, ps, s.regs, XE_GPU_REG_SHADER_CONSTANT_256_X);
+  if (haze_range) *haze_range = haze_range_value;
   profile::Mark(profile::kPack);
 
   // Vertex data and indices into shared memory (made by Prepare with `prep`).
