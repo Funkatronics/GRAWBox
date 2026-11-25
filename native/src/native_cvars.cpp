@@ -51,7 +51,7 @@ REXCVAR_DEFINE_INT32(graw_native_anisotropy, 1, "GRAW native",
 REXCVAR_DEFINE_STRING(graw_native_haze, "fixed", "GRAW native",
                       "The games' distance haze: fixed (post.h), original (blurred and doubled as the "
                       "games draw it) or off");
-REXCVAR_DEFINE_INT32(graw_native_haze_variant, 1, "GRAW native",
+REXCVAR_DEFINE_INT32(graw_native_haze_variant, 3, "GRAW native",
                      "Motion of the fixed haze: 1 as the games, or a variant (post.cpp)");
 REXCVAR_DEFINE_BOOL(graw_native_haze_tuning, false, "GRAW native",
                     "F8 goes through the variants of the fixed haze");

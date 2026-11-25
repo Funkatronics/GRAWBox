@@ -21,7 +21,7 @@ class NativeSettings : public rex::SettingOwner {
   REX_SETTING(std::string, haze, "fixed",
               "The games' distance haze: fixed (no double image, no bleeding), original or off",
               rex::Allowed("fixed", "original", "off"), rex::kRestart);
-  REX_SETTING(rex::i32, haze_variant, 1, "Motion of the fixed haze, 1 as the games",
+  REX_SETTING(rex::i32, haze_variant, 3, "Motion of the fixed haze: 1 as the games, 3 to 6 a random drift",
               rex::Range{1, 6}, rex::kRestart);
   REX_SETTING(bool, haze_tuning, false, "F8 goes through the variants of the fixed haze",
               rex::kRestart);

@@ -159,7 +159,8 @@ See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a
   previous pass, with a few hitches; needs longer and repeated play, not a priority.
 - GRAW 2 haze: better than the original in every way, playable. Left: still too rhythmic, a fast frequency stands out; one
   tree in the middle distance still doubled a little. `native.haze_tuning=true` makes F8 cycle six variants (slower, and noise
-  without a rhythm) to choose from; the smear is tapered for the doubling.
+  without a rhythm) to choose from; the smear is tapered for the doubling. Tester: 3 is good everywhere (now the
+  default), 5 sometimes; the tree looks much better.
 - **GRAW 1: wrong shadow by some barrels**: part of a barrel's shadow is drawn in the air as small translucent black
   triangles. Cause not known. Not compared with the emulated renderer.
 - **GRAW 1: flickering while paused and in the background** (window not focused). Cause not known. Low priority.

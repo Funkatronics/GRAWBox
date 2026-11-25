@@ -31,3 +31,4 @@
 - **2026-11-25, Rust:** the owner approved installing rustup with the stable MSVC toolchain for the launcher.
 - **2026-11-25, haze fix:** the owner asked for the haze fixed rather than removed. `fixed` is the default; `original` and
   `off` stay selectable. Ambient occlusion and sharpening are off by default.
+- **2026-11-25, haze motion:** the owner chose variant 3 (random drift) as the default; 5 and 6 also liked in some scenes.
