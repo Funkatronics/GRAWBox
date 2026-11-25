@@ -87,9 +87,8 @@ REXCVAR_DEFINE_INT32(graw_native_draw_log_from, -1, "GRAW native",
 REXCVAR_DEFINE_INT32(graw_native_draw_log_frames, 1, "GRAW native",
                      "Frames one draw log trigger (--graw_native_draw_log_from or draw-debug.txt "
                      "bit 16) covers");
-REXCVAR_DEFINE_INT32(graw_native_anisotropy, 1, "GRAW native",
-                     "Anisotropic filtering of the game's linearly filtered textures with mips, "
-                     "at least this many samples per pixel (2, 4, 8 or 16; 1: the game's own)");
+REXCVAR_DECLARE(int32_t, graw_native_anisotropy);  // native_cvars.cpp, both backends
+REXCVAR_DECLARE(double, graw_native_mip_bias);
 REXCVAR_DECLARE(std::string, graw_native_capture_dir);
 namespace rex::graphics {
 extern bool g_dxbc_implicit_gradients;  // dxbc_translator_fetch.cpp (local SDK experiment)
@@ -234,6 +233,10 @@ D3D12_SAMPLER_DESC SamplerDesc(const SamplerKey& k) {
     default:
       break;
   }
+  // --graw_native_mip_bias, added to the bias the translated shader applies (the fetch constant's and
+  // the instruction's); a texture without mips has nothing to choose from.
+  static const float mip_bias = float(std::clamp(REXCVAR_GET(graw_native_mip_bias), -4.0, 4.0));
+  d.MipLODBias = mip_bias;
   d.MinLOD = float(k.mip_min_level);
   if (k.mip_base_map) {
     d.MaxLOD = d.MinLOD;
@@ -410,7 +413,8 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
     uint32_t bound = 0;    // textures bound, in order: their cache entries and signs[] writes
     uint32_t textures = 0;
     // The shader's fetch constants in ShaderSlots::mask order (count x 6 dwords), then its
-    // descriptor table (n), then one signs[] write per bound texture (slot | value << 8).
+    // descriptor table (n), then one signs[] write per bound texture (slot | value << 8, and
+    // 1 << 16 when it binds a resolution-scaled image).
     uint32_t data[kMaxSlots * 6 + kMaxIndices + kMaxBound];
     TextureHandle entry[kMaxBound];
   };
@@ -609,7 +613,7 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   void WriteSnapshots(uint64_t completed_fence);
 
   Impl(D3D12Backend& renderer, DrawRenderer::Stats& s)
-      : r(renderer), stats(s), shaders(renderer.device().vendor_id()) {}
+      : r(renderer), stats(s), shaders(renderer.device().vendor_id(), DrawResolutionScale()) {}
   ~Impl() {
     if (!pso_threads.empty()) {
       {
@@ -661,12 +665,13 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
     uint64_t frame_fence;
     uint64_t captured;  // TextureCache::MarkCapture stamp
     uint8_t* signs;     // [32], by fetch constant: the bound textures' swizzled signs
+    uint32_t* scaled;   // bit per fetch constant bound to a resolution-scaled image (OR'd in)
   };
   // The shader's descriptor table into `indices`; returns its entry count.
   uint32_t BindTextures(const TextureBindContext& ctx, const DxbcShader& shader, uint32_t* indices);
   void FillSystemConstants(const DrawState& s, const RegisterFile& regs, xenos::PrimitiveType prim,
                            bool polygonal, xenos::Endian index_endian, const ViewportInfo& vp,
-                           uint32_t used_textures, const uint8_t* signs,
+                           uint32_t used_textures, const uint8_t* signs, uint32_t scaled_textures,
                            DxbcShaderTranslator::SystemConstants& sys);
   DxbcShader* LoadShader(ShaderMemo* table, ShaderMemo*& last, const ShaderRef& ref,
                          xenos::ShaderType type);
@@ -738,8 +743,9 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   // `saves`: this worker saves the library when the workers have been idle for a while.
   // `on_wait`: this worker compiles only while WaitForPipelines waits.
   void PipelineWorker(bool saves, bool on_wait);
+  // Translates and queues the stored pipelines (prewarm), for at most `budget` per call.
   // Per frame: translates and queues stored pipelines from earlier runs for up to ~2 ms.
-  void Prewarm();
+  void Prewarm(std::chrono::milliseconds budget = std::chrono::milliseconds(2));
 
   std::shared_ptr<CoherencyJob> MakeCoherencyJob();
   static constexpr uint32_t kRegisterBlocks[6] = {0,      0x4000, 0x4400,
@@ -921,7 +927,11 @@ bool DrawRenderer::Impl::Initialize() {
       // Shaders translated the other way can't share the cache's pipelines.
       dir /= rex::graphics::g_dxbc_implicit_gradients ? "graw-native" : "graw-native-gradients";
       store.Open(dir, sizeof(PipelineKey), kPipelineKeyVersion);
-      library_path = dir / "pipelines.d3d12lib";
+      // The store keeps guest shaders and keys, translated again at start-up, so every scale
+      // warms up the pipelines any run has seen; the compiled pipelines differ per scale.
+      const uint32_t scale = DrawResolutionScale();
+      library_path = dir / (scale > 1 ? "pipelines-x" + std::to_string(scale) + ".d3d12lib"
+                                      : std::string("pipelines.d3d12lib"));
     }
   }
   if (REXCVAR_GET(graw_native_async_pipelines)) {
@@ -1528,7 +1538,7 @@ DrawRenderer::Impl::Pipeline* DrawRenderer::Impl::CreatePipeline(uint64_t hash,
   return p;
 }
 
-void DrawRenderer::Impl::Prewarm() {
+void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
   const std::vector<PipelineStore::Pipeline>& list = store.loaded_pipelines();
   if (prewarm_next >= list.size()) return;
   const auto t0 = std::chrono::steady_clock::now();
@@ -1564,8 +1574,7 @@ void DrawRenderer::Impl::Prewarm() {
     key.ps = pst;
     const uint64_t hash = XXH3_64bits(&key, sizeof(key));
     if (!pipelines.count(hash)) CreatePipeline(hash, key, *vst, pst, true);
-  } while (prewarm_next < list.size() &&
-           std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(2));
+  } while (prewarm_next < list.size() && std::chrono::steady_clock::now() - t0 < budget);
   prewarm_ms +=
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   ++prewarm_frames;
@@ -1623,6 +1632,12 @@ DxbcShader* DrawRenderer::Impl::LoadShader(ShaderMemo* table, ShaderMemo*& last,
   if (last && last->shader && last->ucode == ref.ucode && last->dwords == ref.dwords &&
       last->immediate_seq == ref.immediate_seq && last->binding == ref.binding)
     return last->shader;
+  // A ucode past the 512 MB of physical memory (an address the tracker didn't mask) isn't read.
+  if (!ref.immediate && uint64_t(ref.ucode) + uint64_t(ref.dwords) * 4 > 0x20000000u) {
+    GRAW_WARN_ONCE("GRAW native draw: shader ucode {:08X} ({} dwords) outside physical memory",
+                    ref.ucode, ref.dwords);
+    return nullptr;
+  }
   // Declaration-patched vertex shaders (IM_LOAD_IMMEDIATE) come from the tracker's copy.
   const uint32_t* ucode =
       ref.immediate ? ref.immediate : reinterpret_cast<const uint32_t*>(membase + ref.ucode);
@@ -1797,7 +1812,10 @@ PipelineKey DrawRenderer::Impl::BuildPipelineKey(
     GetPreferredFacePolygonOffset(regs, polygonal, poly_offset_scale, poly_offset);
     key.depth_bias = rex::graphics::draw_util::GetD3D10IntegerPolygonOffset(
         regs.Get<reg::RB_DEPTH_INFO>().depth_format, poly_offset);
-    key.slope_scaled_depth_bias = poly_offset_scale * xenos::kPolygonOffsetScaleSubpixelUnit;
+    // The guest's slope is per guest pixel; a host pixel at the draw resolution scale sees a
+    // slope that many times smaller.
+    key.slope_scaled_depth_bias = poly_offset_scale * xenos::kPolygonOffsetScaleSubpixelUnit *
+                                  float(r.render_targets().scale());
     key.depth_clip = !regs.Get<reg::PA_CL_CLIP_CNTL>().clip_disable;
     if (targets.depth) {
       uint8_t func = uint8_t(xenos::CompareFunction::kAlways);
@@ -2143,7 +2161,10 @@ uint32_t DrawRenderer::Impl::BindTextures(const TextureBindContext& ctx, const D
         const uint32_t* stored = bm->data + ss.count * 6;
         std::memcpy(indices, stored, n * sizeof(uint32_t));
         stored += n;
-        for (uint32_t i = 0; i < bm->bound; ++i) signs[stored[i] & 0xFF] = uint8_t(stored[i] >> 8);
+        for (uint32_t i = 0; i < bm->bound; ++i) {
+          signs[stored[i] & 0xFF] = uint8_t(stored[i] >> 8);
+          if (stored[i] >> 16 & 1) *ctx.scaled |= 1u << (stored[i] & 0x1F);
+        }
         stats.textures += bm->textures;
         ++stats.bind_memo_hits;
         profile::Count(profile::kBindHit);
@@ -2198,10 +2219,12 @@ uint32_t DrawRenderer::Impl::BindTextures(const TextureBindContext& ctx, const D
         m.index = index;
       }
       signs[tb.fetch_constant] = b.swizzled_signs;
+      if (b.scaled) *ctx.scaled |= 1u << (tb.fetch_constant & 0x1F);
       if (bm) {
         bm->entry[bound] = b.entry;
-        bm->data[ss.count * 6 + n + bound] =
-            uint32_t(uint8_t(tb.fetch_constant)) | uint32_t(b.swizzled_signs) << 8;
+        bm->data[ss.count * 6 + n + bound] = uint32_t(uint8_t(tb.fetch_constant)) |
+                                             uint32_t(b.swizzled_signs) << 8 |
+                                             uint32_t(b.scaled) << 16;
       }
       ++bound;
     } else {
@@ -2257,8 +2280,12 @@ void DrawRenderer::Impl::FillSystemConstants(const DrawState& s, const RegisterF
                                              xenos::PrimitiveType prim, bool polygonal,
                                              xenos::Endian index_endian, const ViewportInfo& vp,
                                              uint32_t used_textures, const uint8_t* signs,
+                                             uint32_t scaled_textures,
                                              DxbcShaderTranslator::SystemConstants& sys) {
   std::memset(&sys, 0, sizeof(sys));
+  // Resolved images bound at the draw resolution scale: the shaders (translated for the scale)
+  // offset and size their fetches in host texels.
+  sys.textures_resolution_scaled = scaled_textures;
   auto vte = regs.Get<reg::PA_CL_VTE_CNTL>();
   auto clip = regs.Get<reg::PA_CL_CLIP_CNTL>();
   auto colorcontrol = regs.Get<reg::RB_COLORCONTROL>();
@@ -2324,8 +2351,10 @@ void DrawRenderer::Impl::FillSystemConstants(const DrawState& s, const RegisterF
       if ((f[4] >> 12) & 0x3FF) ++diag.fetch_classes[6];
     }
   }
-  sys.sample_count_log2[0] = surface_info.msaa_samples >= xenos::MsaaSamples::k4X ? 1 : 0;
-  sys.sample_count_log2[1] = surface_info.msaa_samples >= xenos::MsaaSamples::k2X ? 1 : 0;
+  // The host targets' samples (HostSamples: 1 with --no-graw_native_msaa), as fear-nx did.
+  const uint32_t host_samples = HostSamples(surface_info.value);
+  sys.sample_count_log2[0] = host_samples >= 4 ? 1 : 0;
+  sys.sample_count_log2[1] = host_samples >= 2 ? 1 : 0;
   sys.alpha_test_reference = regs.Get<float>(XE_GPU_REG_RB_ALPHA_REF);
   sys.alpha_to_mask = colorcontrol.alpha_to_mask_enable ? (colorcontrol.value >> 24) | (1 << 8) : 0;
   for (uint32_t i = 0; i < 4; ++i) {
@@ -2546,10 +2575,11 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
   ViewportInfo vp;
   HostViewportInfo(regs, ps && ps->writes_depth(), vp);
   const uint32_t height = std::clamp(scissor.offset[1] + scissor.extent[1], 1u, 2048u);
+  const uint32_t width = std::clamp(scissor.offset[0] + scissor.extent[0], 1u, 8192u);
   profile::Mark(profile::kSetup);
   BoundTargets targets;
   if (!r.render_targets().Bind(list, SurfaceRegsFromRegisters(s.regs), rt_mask, depth_used, height,
-                               &targets)) {
+                               &targets, width)) {
     GRAW_WARN_ONCE("GRAW native draw: RenderTargets::Bind failed (surface {:08X})",
                    regs[XE_GPU_REG_RB_SURFACE_INFO]);
     ++stats.failed;
@@ -2614,20 +2644,23 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
                                  (ps ? ps->GetUsedTextureMaskAfterTranslation() : 0);
   uint32_t desc_vs[64], desc_ps[64];
   uint8_t signs[32] = {};
+  uint32_t scaled_textures = 0;
   const TextureBindContext bind = {s,
                                    regs,
                                    list,
                                    r.textures(),
                                    r.frame_fence(),
                                    prep ? prep->captured : TextureCache::kCapturedNow,
-                                   signs};
+                                   signs,
+                                   &scaled_textures};
   const uint32_t n_desc_vs = BindTextures(bind, *vs, desc_vs);
   const uint32_t n_desc_ps = ps ? BindTextures(bind, *ps, desc_ps) : 1;
   if (!ps) desc_ps[0] = 0;
   profile::Mark(profile::kTextures);
 
   DxbcShaderTranslator::SystemConstants sys;
-  FillSystemConstants(s, regs, prim, polygonal, index_endian, vp, used_textures, signs, sys);
+  FillSystemConstants(s, regs, prim, polygonal, index_endian, vp, used_textures, signs,
+                      scaled_textures, sys);
   profile::Mark(profile::kSysConst);
 
   // Float constants packed by the shaders' maps (UpdateBindings), compared and staged in place.
@@ -2650,16 +2683,19 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
   FlushCopies(list);
   profile::Mark(profile::kVertices);
 
-  // Fixed-function state.
-  D3D12_VIEWPORT viewport = {float(vp.xy_offset[0]),
-                             float(vp.xy_offset[1]),
-                             float(vp.xy_extent[0]),
-                             float(vp.xy_extent[1]),
+  // Fixed-function state, in the targets' host pixels: the guest's pixels times the draw
+  // resolution scale. The NDC transform (system constants) stays the guest's.
+  const uint32_t res_scale = r.render_targets().scale();
+  D3D12_VIEWPORT viewport = {float(vp.xy_offset[0] * res_scale),
+                             float(vp.xy_offset[1] * res_scale),
+                             float(vp.xy_extent[0] * res_scale),
+                             float(vp.xy_extent[1] * res_scale),
                              vp.z_min,
                              vp.z_max};
-  D3D12_RECT scissor_rect = {LONG(scissor.offset[0]), LONG(scissor.offset[1]),
-                             LONG(scissor.offset[0] + scissor.extent[0]),
-                             LONG(scissor.offset[1] + scissor.extent[1])};
+  D3D12_RECT scissor_rect = {LONG(scissor.offset[0] * res_scale),
+                             LONG(scissor.offset[1] * res_scale),
+                             LONG((scissor.offset[0] + scissor.extent[0]) * res_scale),
+                             LONG((scissor.offset[1] + scissor.extent[1]) * res_scale)};
 
   // Root state.
   if (list_dirty) {

@@ -5,7 +5,7 @@
 // (color RT 0-3 or depth) into a texture level, converting the format, averaging MSAA samples,
 // and optionally clears the source surfaces afterwards. Here every resolve destination
 // (guest physical address of the level/slice) gets a host Texture2D that holds exactly the
-// texels the Xenos plugin writes into guest memory, untiled and endian-unswapped, in
+// texels the fear-nx renderer writes into guest memory, untiled and endian-unswapped, in
 // the typeless family of GetHostFormat(dest format)->resource (texture_layout.h), so the
 // texture cache can bind it in place of its own texture (or copy it into one) instead of the
 // guest-memory upload. A compute shader (format packing as ReXGlue's resolve shaders do it)
@@ -64,10 +64,20 @@ struct ResolvedImage {
   // k_2_10_10_10: the copied color before the format's clamp to [0, 1], R16G16B16A16_FLOAT, same
   // size and state as `texture`; nullptr otherwise.
   ID3D12Resource* linear = nullptr;
+  // Above 1x draw resolution (RenderTargets::scale), the same copy at that resolution, `scale`
+  // times wider and taller, read straight from the scaled render target: what the texture cache
+  // binds in place of a texture that is exactly the image's size (the draw then tells the shader
+  // the fetch is resolution-scaled), and what the presenter shows. `texture`, `depth_r32f` and
+  // `linear` above stay at the guest's size (one host pixel from the middle of each guest pixel)
+  // for the copies into textures of other sizes or with mips. Null at 1x.
+  ID3D12Resource* texture_scaled = nullptr;
+  ID3D12Resource* depth_r32f_scaled = nullptr;
+  ID3D12Resource* linear_scaled = nullptr;
+  uint32_t scale = 1;
   uint64_t seq = 0;  // increases with every write (global resolve counter)
 };
 
-// The Xenos plugin's --readback_resolve "fast"/"some" copy the previous resolve of the same
+// The fear-nx renderer's --readback_resolve "fast"/"some" copy the previous resolve of the same
 // address range into guest memory (one frame late), so guest memory never holds the frame the
 // guest just swapped. Oracles (captures, dumps) call HoldFullReadback(true) a frame ahead, which
 // switches the plugin to "full" (synchronous, exact) through the cvar registry, and
@@ -89,7 +99,7 @@ class Resolver {
   void BeginFrame(uint64_t frame, uint64_t frame_fence, uint64_t completed_fence);
 
   // After the swap's EndFrame: for a dumped frame, sleeps --graw_native_capture_hold_ms so the
-  // Xenos plugin can execute the frame, then copies the guest memory of its resolves. That
+  // fear-nx renderer can execute the frame, then copies the guest memory of its resolves. That
   // sleep holds the guest only when frames are recorded on the guest thread: with the render
   // thread (the default) the guest runs on and the copies may hold a later frame.
   void AfterSwap();
@@ -131,6 +141,9 @@ class Resolver {
     void operator()(Dump* dump) const;
   };
   bool CreatePipelines();
+  // A view heap of kHeapSlots frame slots with room for this many resolves each, in place of the
+  // current one, which is retired until the lists that read it are done.
+  bool CreateHeap(uint32_t resolves_per_frame);
   // The image at p.dest_base for p's format and size, created if missing; `*dest_out`: its
   // destination.
   Image* GetImage(const ResolveParams& p, Destination** dest_out);
@@ -157,8 +170,15 @@ class Resolver {
   struct Pipelines;
   std::unique_ptr<Pipelines> pipelines_;
   ComPtr<ID3D12DescriptorHeap> heap_;  // shader visible: per-frame rings of view tables
+  uint32_t heap_per_frame_ = 0;        // descriptors in a frame slot
+  uint32_t views_per_resolve_ = 4;     // kViewsPerResolve, twice above 1x (the scaled copy)
   uint32_t heap_stride_ = 0;
   uint32_t heap_next_ = 0;
+  struct RetiredHeap {
+    ComPtr<ID3D12DescriptorHeap> heap;
+    uint64_t fence;  // the frame fence when it was replaced
+  };
+  std::vector<RetiredHeap> retired_heaps_;
   bool b5g6r5_store_ = false;  // typed UAV store of B5G6R5_UNORM (k_5_6_5 / k_6_5_5 images)
   bool linear_output_ = false;
   std::unordered_map<uint32_t, Destination> destinations_;

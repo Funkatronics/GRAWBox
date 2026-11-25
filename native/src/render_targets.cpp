@@ -22,6 +22,7 @@ constexpr uint32_t kMaxViews = 256;     // RTVs and DSVs each; PGR4 uses ~20 sur
 constexpr uint32_t kNullRtvs = 3;       // null RTVs for 1, 2 and 4 samples, at the heap's start
 constexpr uint32_t kEdramTiles = 2048;  // 10 MiB of 80x16-sample tiles
 constexpr uint32_t kMaxHeight = 2048;  // as surfaces.cpp
+constexpr uint32_t kMaxWidth = 8192;   // as surfaces.cpp
 
 // Host DXGI format of a guest color render target format (UNKNOWN if unsupported).
 DXGI_FORMAT ColorFormat(uint32_t f) {
@@ -61,7 +62,7 @@ uint32_t EdramRows(uint32_t base, uint32_t pitch, uint32_t samples, bool wide) {
 }
 
 EdramGrid GridOf(const RenderTarget& rt) {
-  return GetEdramGrid(rt.depth, rt.edram_base, rt.pitch, rt.samples, rt.guest_format);
+  return GetEdramGrid(rt.depth, rt.edram_base, rt.pitch, rt.guest_samples, rt.guest_format);
 }
 
 // A pending clear's rectangle: empty for the whole target.
@@ -76,9 +77,22 @@ bool Intersects(const D3D12_RECT& a, const D3D12_RECT& b) {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
-// One clear call of `v` over `rects` (none: the whole target).
+// Guest-pixel rectangles in a target's host pixels (DrawResolutionScale).
+const D3D12_RECT* Scaled(const D3D12_RECT* rects, UINT n, uint32_t scale,
+                         std::vector<D3D12_RECT>& storage) {
+  if (scale == 1 || !n) return rects;
+  storage.resize(n);
+  for (UINT i = 0; i < n; ++i)
+    storage[i] = {LONG(rects[i].left * LONG(scale)), LONG(rects[i].top * LONG(scale)),
+                  LONG(rects[i].right * LONG(scale)), LONG(rects[i].bottom * LONG(scale))};
+  return storage.data();
+}
+
+// One clear call of `v` over `rects` (none: the whole target), in guest pixels.
 void Record(ID3D12GraphicsCommandList* list, RenderTarget* rt, const ClearValue& v,
-            const D3D12_RECT* rects, UINT n) {
+            const D3D12_RECT* rects, UINT n, uint32_t scale) {
+  std::vector<D3D12_RECT> storage;
+  rects = Scaled(rects, n, scale, storage);
   if (rt->depth) {
     RenderTargets::Transition(list, rt, D3D12_RESOURCE_STATE_DEPTH_WRITE);
     list->ClearDepthStencilView(rt->view, D3D12_CLEAR_FLAGS(v.flags), v.depth, v.stencil, n,
@@ -96,6 +110,7 @@ RenderTargets::~RenderTargets() = default;
 
 bool RenderTargets::Initialize(ID3D12Device* device) {
   device_ = device;
+  scale_ = DrawResolutionScale();
   D3D12_DESCRIPTOR_HEAP_DESC hd = {};
   hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
   hd.NumDescriptors = kMaxViews + kNullRtvs;
@@ -139,11 +154,13 @@ void RenderTargets::Retire(ComPtr<ID3D12Resource> resource) {
   if (resource) retired_.push_back({std::move(resource), frame_fence_});
 }
 
-bool RenderTargets::Create(RenderTarget* rt, uint32_t height) {
+bool RenderTargets::Create(RenderTarget* rt, uint32_t width, uint32_t height) {
+  // The resource holds the target at the draw resolution scale; rt's size stays in guest pixels.
+  width = std::max({1u, rt->pitch, width});
   D3D12_RESOURCE_DESC d = {};
   d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-  d.Width = std::max(1u, rt->pitch);
-  d.Height = height;
+  d.Width = uint64_t(width) * scale_;
+  d.Height = height * scale_;
   d.DepthOrArraySize = 1;
   d.MipLevels = 1;
   d.Format = rt->resource_format;
@@ -166,11 +183,11 @@ bool RenderTargets::Create(RenderTarget* rt, uint32_t height) {
   if (log_)
     std::fprintf(log_, "rt created %s base %u pitch %u x%u format %d %ux%u%s\n",
                  rt->depth ? "depth" : "color", rt->edram_base, rt->pitch, rt->samples,
-                 int(rt->view_format), uint32_t(d.Width), height, rt->resource ? " (grown)" : "");
+                 int(rt->view_format), width, height, rt->resource ? " (grown)" : "");
   Retire(std::move(rt->resource));
   rt->resource = std::move(res);
   rt->state = initial;
-  rt->width = uint32_t(d.Width);
+  rt->width = width;
   rt->height = height;
   rt->pending_count = 0;  // a grown target loses the old one's content
   if (rt->view_index == UINT32_MAX) {
@@ -201,9 +218,11 @@ bool RenderTargets::Create(RenderTarget* rt, uint32_t height) {
 }
 
 RenderTarget* RenderTargets::Get(bool depth, uint32_t surface_info, uint32_t info,
-                                 uint32_t height) {
+                                 uint32_t height, uint32_t width) {
   const uint32_t pitch = surface_info & 0x3FFF;
+  // The key and the EDRAM layout take the guest's samples, the resource the host's.
   const uint32_t samples = SurfaceSamples(surface_info);
+  const uint32_t host_samples = HostSamples(surface_info);
   const uint32_t base = info & 0xFFF;
   DXGI_FORMAT resource, view, srv, stencil_srv = DXGI_FORMAT_UNKNOWN;
   uint32_t guest_format;
@@ -235,7 +254,14 @@ RenderTarget* RenderTargets::Get(bool depth, uint32_t surface_info, uint32_t inf
   const uint64_t key = (uint64_t(depth) << 63) | (uint64_t(samples >> 1) << 60) |
                        (uint64_t(base) << 44) | (uint64_t(pitch) << 30) | uint64_t(view);
   GetMemo& memo = get_memo_[(key ^ (key >> 30) ^ (key >> 44) ^ (key >> 60)) & 15];
-  if (memo.rt && memo.key == key && std::min(height, kMaxHeight) <= memo.rt->height) {
+  // F.E.A.R.: its predicated tiles are side by side, so the surface pitch is one tile's width,
+  // and the host target, which holds all the tiles at once, is as wide as the untiled draws reach
+  // (the scissor, which the tracker sets untiled). GRAW's and PGR4's tiles are full-width bands:
+  // there the pitch is the width already, and only the height grows.
+  // D3D12's largest texture is 16384 pixels across.
+  width = std::min(width, std::min(kMaxWidth, 16384 / scale_));
+  if (memo.rt && memo.key == key && std::min(height, kMaxHeight) <= memo.rt->height &&
+      width <= memo.rt->width) {
     memo.rt->guest_format = guest_format;
     memo.rt->last_frame = frame_;
     return memo.rt;
@@ -250,25 +276,29 @@ RenderTarget* RenderTargets::Get(bool depth, uint32_t surface_info, uint32_t inf
     rt->depth = depth;
     rt->edram_base = base;
     rt->pitch = pitch;
-    rt->samples = samples;
+    rt->samples = host_samples;
+    rt->guest_samples = samples;
     rt->resource_format = resource;
     rt->view_format = view;
     rt->srv_format = srv;
     rt->stencil_srv_format = stencil_srv;
     rt->view_index = UINT32_MAX;
-    if (!Create(rt, want)) {
+    if (!Create(rt, width, want)) {
       if (rt->view_index != UINT32_MAX) (depth ? free_dsv_ : free_rtv_).push_back(rt->view_index);
       return nullptr;
     }
     targets_.emplace(key, std::move(owned));
   } else {
     rt = it->second.get();
-    if (std::min(height, kMaxHeight) > rt->height) {
-      // Taller than anything this surface had: a new, taller target. The old content is lost
-      // (not seen in PGR4's traces: every surface is created at its EDRAM height or more).
-      REXLOG_WARN("GRAW native RT: growing {} base {} pitch {} x{} from {} to {} rows",
-                  depth ? "depth" : "color", base, pitch, samples, rt->height, want);
-      if (!Create(rt, want)) return nullptr;
+    if (std::min(height, kMaxHeight) > rt->height || width > rt->width) {
+      // Taller (or wider) than anything this surface had: a new, larger target. The old content
+      // is lost (not seen in PGR4's traces: every surface is created at its EDRAM height or more;
+      // F.E.A.R.'s are as wide as their first draw's scissor).
+      const uint32_t rows = std::max(want, rt->height), columns = std::max(width, rt->width);
+      REXLOG_WARN("GRAW native RT: growing {} base {} pitch {} x{} from {}x{} to {}x{}",
+                  depth ? "depth" : "color", base, pitch, samples, rt->width, rt->height, columns,
+                  rows);
+      if (!Create(rt, columns, rows)) return nullptr;
     }
   }
   rt->guest_format = guest_format;
@@ -277,12 +307,13 @@ RenderTarget* RenderTargets::Get(bool depth, uint32_t surface_info, uint32_t inf
   return rt;
 }
 
-RenderTarget* RenderTargets::GetColor(const SurfaceRegs& regs, uint32_t index, uint32_t height) {
-  return Get(false, regs.surface_info, regs.color_info[index & 3], height);
+RenderTarget* RenderTargets::GetColor(const SurfaceRegs& regs, uint32_t index, uint32_t height,
+                                      uint32_t width) {
+  return Get(false, regs.surface_info, regs.color_info[index & 3], height, width);
 }
 
-RenderTarget* RenderTargets::GetDepth(const SurfaceRegs& regs, uint32_t height) {
-  return Get(true, regs.surface_info, regs.depth_info, height);
+RenderTarget* RenderTargets::GetDepth(const SurfaceRegs& regs, uint32_t height, uint32_t width) {
+  return Get(true, regs.surface_info, regs.depth_info, height, width);
 }
 
 void RenderTargets::Transition(ID3D12GraphicsCommandList* list, RenderTarget* rt,
@@ -294,9 +325,10 @@ void RenderTargets::Transition(ID3D12GraphicsCommandList* list, RenderTarget* rt
 }
 
 bool RenderTargets::Bind(ID3D12GraphicsCommandList* list, const SurfaceRegs& regs,
-                         uint32_t color_mask, bool depth_used, uint32_t height, BoundTargets* out) {
+                         uint32_t color_mask, bool depth_used, uint32_t height, BoundTargets* out,
+                         uint32_t width) {
   *out = BoundTargets{};
-  const uint32_t samples = SurfaceSamples(regs.surface_info);
+  const uint32_t samples = HostSamples(regs.surface_info);
   out->samples = samples;
   out->width = UINT32_MAX;
   out->height = UINT32_MAX;
@@ -305,7 +337,7 @@ bool RenderTargets::Bind(ID3D12GraphicsCommandList* list, const SurfaceRegs& reg
   for (uint32_t i = 0; i < 4; ++i) {
     out->rtv[i] = null_rtv;
     if (!(color_mask >> i & 1)) continue;
-    RenderTarget* rt = GetColor(regs, i, height);
+    RenderTarget* rt = GetColor(regs, i, height, width);
     if (!rt) return false;
     Transition(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET);
     if (rt->fill_seq != fills_.seq()) SyncEdram(list, rt);
@@ -317,7 +349,7 @@ bool RenderTargets::Bind(ID3D12GraphicsCommandList* list, const SurfaceRegs& reg
     out->height = std::min(out->height, rt->height);
   }
   if (depth_used) {
-    RenderTarget* rt = GetDepth(regs, height);
+    RenderTarget* rt = GetDepth(regs, height, width);
     if (!rt) return false;
     Transition(list, rt, D3D12_RESOURCE_STATE_DEPTH_WRITE);
     if (rt->pending_count) Flush(list, rt);
@@ -338,7 +370,7 @@ bool RenderTargets::Bind(ID3D12GraphicsCommandList* list, const SurfaceRegs& reg
 
 void RenderTargets::Clear(ID3D12GraphicsCommandList* list, const SurfaceRegs& regs,
                           uint32_t bound_colors, bool depth_bound, uint32_t height,
-                          const ClearParams& p) {
+                          const ClearParams& p, uint32_t width) {
   // What the clear leaves in the EDRAM, in pixels from the surface's base. A whole-surface
   // clear covers the rows of the call's height hint (the target itself may be taller).
   const std::vector<D3D12_RECT>& edram = p.edram_rects.empty() ? p.rects : p.edram_rects;
@@ -350,7 +382,7 @@ void RenderTargets::Clear(ID3D12GraphicsCommandList* list, const SurfaceRegs& re
   };
   for (uint32_t i = 0; i < 4; ++i) {
     if (!(p.flags >> i & 1) || !(bound_colors >> i & 1)) continue;
-    RenderTarget* rt = GetColor(regs, i, height);
+    RenderTarget* rt = GetColor(regs, i, height, width);
     if (!rt) continue;
     ClearValue v;
     v.flags = 1;
@@ -367,7 +399,7 @@ void RenderTargets::Clear(ID3D12GraphicsCommandList* list, const SurfaceRegs& re
   if (p.flags & 0x10) df |= D3D12_CLEAR_FLAG_DEPTH;
   if (p.flags & 0x20) df |= D3D12_CLEAR_FLAG_STENCIL;
   if (df && depth_bound) {
-    RenderTarget* rt = GetDepth(regs, height);
+    RenderTarget* rt = GetDepth(regs, height, width);
     if (rt) {
       ClearValue v;
       v.flags = df;
@@ -387,7 +419,7 @@ void RenderTargets::Defer(ID3D12GraphicsCommandList* list, RenderTarget* rt, con
   const size_t n = std::max<size_t>(rects.size(), 1);
   if (rt->pending_count + n > kMaxPendingClears) Flush(list, rt);
   if (n > kMaxPendingClears) {
-    Record(list, rt, v, rects.data(), UINT(rects.size()));
+    Record(list, rt, v, rects.data(), UINT(rects.size()), scale_);
     return;
   }
   if (rects.empty()) {
@@ -431,7 +463,7 @@ void RenderTargets::Flush(ID3D12GraphicsCommandList* list, RenderTarget* rt) {
            ++i)
         rects[n++] = rt->pending[i].rect;
     }
-    Record(list, rt, first.value, rects, n);
+    Record(list, rt, first.value, rects, n, scale_);
   }
   if (log_)
     std::fprintf(log_, "rt pending clears of %s base %u pitch %u x%u: %u recorded in %u calls\n",
@@ -469,7 +501,8 @@ void RenderTargets::SyncEdram(ID3D12GraphicsCommandList* list, RenderTarget* rt)
       if (rt->pending_count) Flush(list, rt);
     }
     Transition(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    list->ClearRenderTargetView(rt->view, f.color, nr, rects);
+    std::vector<D3D12_RECT> scaled;
+    list->ClearRenderTargetView(rt->view, f.color, nr, Scaled(rects, nr, scale_, scaled));
     if (log_)
       std::fprintf(log_,
                    "edram fill seq %llu at tile %u pitch %u color %g,%g,%g,%g applied to base %u "

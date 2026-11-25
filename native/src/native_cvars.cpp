@@ -38,3 +38,13 @@ REXCVAR_DEFINE_BOOL(graw_native_luma_probe, false, "GRAW native",
                     "Read back three rows of every front buffer (at 10, 40 and 80 % of its "
                     "height) and log their mean brightness in the frame CSV, to find frames "
                     "drawn partly black");
+REXCVAR_DEFINE_INT32(graw_native_resolution_scale, 1, "GRAW native",
+                     "Draw resolution: 1 = 1280x720, 2 = 2560x1440, 3 = 3840x2160, 0 = the smallest "
+                     "of them at least as tall as the screen");
+REXCVAR_DEFINE_BOOL(graw_native_msaa, true, "GRAW native",
+                    "Draw with the multisampling the game asks for");
+REXCVAR_DEFINE_DOUBLE(graw_native_mip_bias, 0.0, "GRAW native",
+                      "Mip level bias added to every sampler");
+REXCVAR_DEFINE_INT32(graw_native_anisotropy, 1, "GRAW native",
+                     "Anisotropic filtering of the game's linearly filtered textures with mips, "
+                     "at least this many samples per pixel (2, 4, 8 or 16; 1: the game's own)");

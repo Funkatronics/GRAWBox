@@ -38,6 +38,7 @@ const GrawboxTitle grawbox::kTitle = {
     .tile_count = 12996,
     .tile_rects = 13000,
     .tile_origins = 13240,
+    .tile_origin_stride = 16,
     .pending_push = 13652,
     .texture_fetch = 16,
     .index_buffer_format = 0,

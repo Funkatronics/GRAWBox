@@ -7,6 +7,7 @@
 // frames.
 #pragma once
 
+#include "graw_d3d.h"
 #include "host_types.h"
 
 #include <cstdint>
@@ -35,22 +36,35 @@ inline uint32_t SurfaceSamples(uint32_t surface_info) {
   return msaa >= 2 ? 4 : msaa == 1 ? 2 : 1;
 }
 
-// GRAW's guest D3D device fields this module reads (docs/NATIVE_RENDERER.md). The register
-// shadow blocks are the ones the draw flush sub_824D9E98 sends; the surfaces are what
-// SetRenderTarget / SetDepthStencilSurface (sub_824D0FB8) bind and Resolve (sub_824D1960) reads.
-constexpr uint32_t kDevShadow2000 = 11456;     // registers 0x2000..
-constexpr uint32_t kDevShadow2100 = 11532;     // registers 0x2100..
-constexpr uint32_t kDevShadow2300 = 11768;     // registers from 0x2300 (the RB_COPY_* block)
-constexpr uint32_t kDevColorSurfaces = 12536;  // 4 x guest D3D surface object
-constexpr uint32_t kDevDepthSurface = 12552;
-// Predicated tiling, as BeginTiling (sub_824D2868) stores it: the tile count, each tile's
-// rectangle in surface pixels {x1, y1, x2, y2} (16 bytes), and each tile's rectangle rounded
-// out to 32 pixels {x1, y1, x2, y2} (16 bytes; PGR4's D3D keeps only the origin, 8 bytes): its
-// top left is the surface pixel the guest renders at the EDRAM base.
-constexpr uint32_t kDevTileCount = 12996;
-constexpr uint32_t kDevTileRects = 13000;
-constexpr uint32_t kDevTileOrigins = 13240;
-constexpr uint32_t kDevTileOriginStride = 16;
+// The host targets' samples: the guest's (SurfaceSamples), or 1 with --no-graw_native_msaa
+// (render_targets.cpp), which draws the game without its 2x/4x MSAA. The guest's count still
+// sizes the EDRAM layout (RenderTarget::guest_samples).
+uint32_t HostSamples(uint32_t surface_info);
+
+// The D3D12 renderer's draw resolution scale (--graw_native_resolution_scale, read once): host
+// pixels per guest pixel across and down, 1 (the 360's 1280x720) to kMaxDrawResolutionScale
+// (3840x2160). Its render targets are this much larger than the guest's surfaces, and each
+// resolve keeps a scaled image beside the guest-sized one (resolve.h). Every size and rectangle
+// stays in guest pixels until it reaches the GPU. The Vulkan renderer draws at 1.
+constexpr uint32_t kMaxDrawResolutionScale = 3;
+uint32_t DrawResolutionScale();
+
+// The guest D3D device fields this module reads (graw_d3d.h). The register shadow blocks are
+// the ones the draws' inline flush sends; the surfaces are what SetRenderTarget /
+// SetDepthStencilSurface bind and Resolve (sub_82984718) reads.
+inline const uint32_t& kDevShadow2000 = dev::kShadow2000;        // registers 0x2000..
+inline const uint32_t& kDevShadow2100 = dev::kShadow2100;        // registers 0x2100..
+inline const uint32_t& kDevShadow2300 = dev::kShadow2300;        // registers from 0x2300 (RB_COPY_*)
+inline const uint32_t& kDevColorSurfaces = dev::kColorSurfaces;  // 4 x guest D3D surface object
+inline const uint32_t& kDevDepthSurface = dev::kDepthSurface;
+// Predicated tiling, as BeginTiling (sub_82979BD0) stores it: the tile count, each tile's
+// rectangle in surface pixels {x1, y1, x2, y2} (16 bytes), and each tile's top left rounded out
+// to 32 pixels {x, y} (8 bytes, as in PGR4's D3D; GRAW's keeps the whole rounded rectangle, 16):
+// the surface pixel the guest renders at the EDRAM base.
+inline const uint32_t& kDevTileCount = dev::kTileCount;
+inline const uint32_t& kDevTileRects = dev::kTileRects;
+inline const uint32_t& kDevTileOrigins = dev::kTileOrigins;
+inline const uint32_t& kDevTileOriginStride = g_title.tile_origin_stride;
 constexpr uint32_t kMaxTiles = 15;
 
 // Decoded Clear / ClearF arguments.
@@ -74,6 +88,7 @@ struct ClearCall {
   uint32_t bound_colors = 0;  // bit i: a surface is bound as render target i
   bool depth_bound = false;
   uint32_t height = 0;
+  uint32_t width = 0;  // the same for the width (F.E.A.R.'s side-by-side tiles; see Get)
 };
 
 // A surface's EDRAM layout: tiles of 80 dwords x 16 sample rows; a pixel takes 2 x 2 samples

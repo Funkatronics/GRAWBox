@@ -5,6 +5,7 @@
 #include "hook_args.h"
 #include "log.h"
 
+#include <rex/cvar.h>
 #include <rex/graphics/xenos.h>
 #include <rex/logging.h>
 
@@ -12,12 +13,16 @@
 #include <cmath>
 #include <cstring>
 
+REXCVAR_DECLARE(bool, graw_native_msaa);
+REXCVAR_DECLARE(int32_t, graw_native_resolution_scale);
+
 namespace graw::native {
 namespace {
 
 namespace xenos = rex::graphics::xenos;
 
 constexpr uint32_t kMaxHeight = 2048;
+constexpr uint32_t kMaxWidth = 8192;
 
 // Tiles [base, end) under a surface's first `rows` rows of pixels.
 uint32_t GridEnd(const EdramGrid& g, uint32_t rows) {
@@ -155,6 +160,40 @@ void EdramFills::ForEach(
   }
 }
 
+// --no-graw_native_msaa (surfaces.h).
+uint32_t HostSamples(uint32_t surface_info) {
+  static const bool msaa = REXCVAR_GET(graw_native_msaa);
+  return msaa ? SurfaceSamples(surface_info) : 1;
+}
+
+// --graw_native_resolution_scale (surfaces.h), decided once and logged.
+uint32_t DrawResolutionScale() {
+  static const uint32_t scale = [] {
+    const int32_t asked = REXCVAR_GET(graw_native_resolution_scale);
+    uint32_t s = uint32_t(std::clamp(asked, 0, int32_t(kMaxDrawResolutionScale)));
+    uint32_t display_height = 0;
+#if defined(_WIN32)
+    // The primary display's mode, in pixels whatever the process's DPI awareness.
+    DEVMODEW mode = {};
+    mode.dmSize = sizeof(mode);
+    if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode))
+      display_height = mode.dmPelsHeight;
+#endif
+    if (!s) {
+      s = 1;
+      while (s < kMaxDrawResolutionScale && 720 * s < display_height) ++s;
+    }
+    if (asked) {
+      REXLOG_INFO("GRAW native: drawing at {}x{} ({}x the 360's 1280x720)", 1280 * s, 720 * s, s);
+    } else {
+      REXLOG_INFO("GRAW native: drawing at {}x{} ({}x the 360's 1280x720, for the display's {} rows)",
+                  1280 * s, 720 * s, s, display_height);
+    }
+    return s;
+  }();
+  return scale;
+}
+
 SurfaceRegs SurfaceRegsFromRegisters(const uint32_t* regs) {
   SurfaceRegs s;
   s.surface_info = regs[0x2000];
@@ -247,6 +286,14 @@ bool DecodeClear(const uint8_t* base, const HookArgs& args, ClearCall* out) {
   for (const Rect& r : p.rects)
     height = std::max(height, uint32_t(std::max<int32_t>(r.bottom, 0)));
   out->height = height;
+  // And the width, from the viewport right (PA_CL_VPORT_XSCALE 0x210F, XOFFSET 0x2110) and the
+  // rectangles (F.E.A.R.'s side-by-side tiles; see RenderTargets::Get).
+  const float xs = LoadFloat(base, device + kDevShadow2100 + 0x0F * 4);
+  const float xo = LoadFloat(base, device + kDevShadow2100 + 0x10 * 4);
+  const float right = std::fabs(xs) + xo;
+  uint32_t width = (right > 0.0f && right <= float(kMaxWidth)) ? uint32_t(std::ceil(right)) : 0;
+  for (const Rect& r : p.rects) width = std::max(width, uint32_t(std::max<int32_t>(r.right, 0)));
+  out->width = width;
   return true;
 }
 

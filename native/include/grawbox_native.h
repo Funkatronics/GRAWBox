@@ -42,7 +42,7 @@ struct GrawboxTitle {
   uint32_t fetch_constants, vs_constants, ps_constants, bool_loop, ring_read_ptr, flags;
   uint32_t shadow_2000, shadow_2100, shadow_2180, shadow_2200, shadow_2280, shadow_2300, shadow_2380;
   uint32_t scissor_tl, scissor_br, index_buffer, color_surfaces, depth_surface, vertex_stride;
-  uint32_t tile_count, tile_rects, tile_origins, pending_push;
+  uint32_t tile_count, tile_rects, tile_origins, tile_origin_stride, pending_push;
   uint32_t texture_fetch, index_buffer_format, index_buffer_address;
 };
 

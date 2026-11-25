@@ -1,5 +1,5 @@
 // Ucode -> DXBC cache of the native renderer. Shaders are keyed by the XXH3 hash of their
-// guest (big-endian) ucode, the same ucode_data_hash the Xenos plugin uses in its dumps and in
+// guest (big-endian) ucode, the same ucode_data_hash the fear-nx renderer uses in its dumps and in
 // its shader storage (.xsh), and translations by (shader, modification).
 // Threading: Translate on the renderer's recording thread only. Load and Find take a lock: Load
 // also runs on the guest thread (DrawRenderer::Prepare in render thread mode, and
@@ -29,9 +29,10 @@ struct ShaderCacheStats {
 
 class ShaderCache {
  public:
-  // vendor_id: the adapter's PCI vendor (DXGI_ADAPTER_DESC1::VendorId), as the Xenos plugin
-  // passes it: the translator changes its code for Intel.
-  explicit ShaderCache(uint32_t vendor_id);
+  // vendor_id: the adapter's PCI vendor (DXGI_ADAPTER_DESC1::VendorId), as the fear-nx renderer
+  // passes it: the translator changes its code for Intel. resolution_scale: the draw resolution
+  // scale (DrawResolutionScale, surfaces.h), across and down.
+  ShaderCache(uint32_t vendor_id, uint32_t resolution_scale);
   ~ShaderCache();
 
   const DxbcShaderTranslator& translator() const { return translator_; }

@@ -115,7 +115,7 @@ void D3D12Backend::Draw(const DrawState& state, const DrawPrep* prep) {
 void D3D12Backend::Clear(const ClearCall& c) {
   if (gpu_timer_) gpu_timer_->Pass(device_->command_list(), GpuTimer::KeyClear(c));
   draw_->LogClear(c);
-  rt_->Clear(device_->command_list(), c.regs, c.bound_colors, c.depth_bound, c.height, c.p);
+  rt_->Clear(device_->command_list(), c.regs, c.bound_colors, c.depth_bound, c.height, c.p, c.width);
 }
 
 void D3D12Backend::Resolve(const ResolveParams& p) {

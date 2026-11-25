@@ -1,7 +1,7 @@
 // GRAW native renderer (ported from pgr4-native 8ea20d5, MIT; see native/README.md): the CPU side of guest textures.
 //
 // Pure functions with no D3D12 objects and no ReXGlue runtime state, so an offline build
-// (GRAW_TEXTURES_OFFLINE) can run them on guest-memory dumps:
+// (FEAR_D3D12_TEXTURES_OFFLINE) can run them on guest-memory dumps:
 //   - TextureKeyFromFetch: the storage-relevant part of a texture fetch constant (what the
 //     cache keys on), derived the same way as ReXGlue's TextureCache::BindingInfoFromFetchConstant.
 //   - GetHostFormat: Xenos format -> DXGI format and the per-block conversion, the same host
@@ -54,7 +54,7 @@ struct TextureKeyHasher {
 };
 
 // False when the fetch constant has no texture data (invalid type, no base and no mips, or a
-// 1D texture with tiling/packed mips, which the Xenos plugin also rejects).
+// 1D texture with tiling/packed mips, which the fear-nx renderer also rejects).
 bool TextureKeyFromFetch(const uint32_t fetch[6], TextureKey* key);
 
 // Per-block conversion from the endian-swapped guest block to the host block.
@@ -62,6 +62,7 @@ enum class TextureConversion : uint8_t {
   kCopy,
   kR5G6B5ToB5G6R5,                 // k_5_6_5: swap the 5-bit R and B fields
   kR5G5B6ToB5G6R5WithRBGASwizzle,  // k_6_5_5: host swizzle R,B,G,G restores the order
+  kR4G4B4A4ToB4G4R4A4,             // k_4_4_4_4: swap the R and B nibbles
   kDepthUnorm24ToFloat32,          // k_24_8: R32_FLOAT = unorm24(d >> 8)
   kDepthFloat24ToFloat32,          // k_24_8_FLOAT: R32_FLOAT = float20e4(d >> 8)
   // Expanding (HostFormat::expand 2): one 32-bit guest texel to four 16-bit UNORM channels, as

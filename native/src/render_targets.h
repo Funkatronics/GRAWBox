@@ -68,7 +68,9 @@ struct RenderTarget {
   bool depth = false;
   uint32_t edram_base = 0;  // tiles
   uint32_t pitch = 0;       // pixels (RB_SURFACE_INFO surface_pitch)
-  uint32_t samples = 1;     // 1, 2 or 4
+  uint32_t samples = 1;     // 1, 2 or 4: the host resource's (HostSamples)
+  uint32_t guest_samples = 1;  // the guest's, for the EDRAM layout
+  // In guest pixels; the resource is RenderTargets::scale() times larger each way.
   uint32_t width = 0, height = 0;
   uint32_t guest_format = 0;  // last xenos::ColorRenderTargetFormat / DepthRenderTargetFormat
   DXGI_FORMAT resource_format = DXGI_FORMAT_UNKNOWN;
@@ -104,25 +106,31 @@ class RenderTargets {
 
   bool Initialize(ID3D12Device* device);
 
+  // Host pixels per guest pixel across and down (DrawResolutionScale, surfaces.h). Sizes and
+  // rectangles here are in guest pixels; the resources and the D3D12 calls are scaled.
+  uint32_t scale() const { return scale_; }
+
   // Host targets for a draw. color_mask bit i: guest RT i is used (its RB_COLOR_MASK nibble is
   // non-zero); depth_used: depth or stencil test/write enabled. height: rows the draw can
-  // touch (bottom of its scissor/viewport, clamped to 2048). Records the targets' pending
+  // touch (bottom of its scissor/viewport, clamped to 2048); width: the same for columns (the
+  // right of its scissor). Records the targets' pending
   // clears and the barriers to RENDER_TARGET / DEPTH_WRITE into `list`; the caller sets the
   // RTVs/DSV from `out`.
   bool Bind(ID3D12GraphicsCommandList* list, const SurfaceRegs& regs, uint32_t color_mask,
-            bool depth_used, uint32_t height, BoundTargets* out);
+            bool depth_used, uint32_t height, BoundTargets* out, uint32_t width = 0);
 
   // A guest clear (DecodeClear, surfaces.h): clears the host targets of the surfaces it names.
   // Each clear is recorded at its target's next use (Bind, PrepareRead), and one that a later
   // clear or EDRAM fill covers is dropped: EndTiling's resolve clears the scene's tiles, and the
   // next frame's BeginTiling clears them again before anything reads them.
   void Clear(ID3D12GraphicsCommandList* list, const SurfaceRegs& regs, uint32_t bound_colors,
-             bool depth_bound, uint32_t height, const ClearParams& p);
+             bool depth_bound, uint32_t height, const ClearParams& p, uint32_t width = 0);
 
   // The host target of guest color RT `index` (0..3) or of the depth surface, created if
   // missing (resolve sources). nullptr for an invalid format.
-  RenderTarget* GetColor(const SurfaceRegs& regs, uint32_t index, uint32_t height);
-  RenderTarget* GetDepth(const SurfaceRegs& regs, uint32_t height);
+  RenderTarget* GetColor(const SurfaceRegs& regs, uint32_t index, uint32_t height,
+                         uint32_t width = 0);
+  RenderTarget* GetDepth(const SurfaceRegs& regs, uint32_t height, uint32_t width = 0);
 
   // Before reading rt's pixels in `r` outside a draw (resolve sources): records the EDRAM fills
   // over its tiles since its last use, and its pending clears if one touches `r`, in the order
@@ -164,12 +172,14 @@ class RenderTargets {
   // Records rt's pending clears into `list`, oldest first.
   void Flush(ID3D12GraphicsCommandList* list, RenderTarget* rt);
 
-  RenderTarget* Get(bool depth, uint32_t surface_info, uint32_t info, uint32_t height);
+  RenderTarget* Get(bool depth, uint32_t surface_info, uint32_t info, uint32_t height,
+                    uint32_t width);
   void Retire(ComPtr<ID3D12Resource> resource);
-  bool Create(RenderTarget* rt, uint32_t height);
+  bool Create(RenderTarget* rt, uint32_t width, uint32_t height);
   uint32_t AllocView(bool depth);
 
   ID3D12Device* device_ = nullptr;
+  uint32_t scale_ = 1;
   ComPtr<ID3D12DescriptorHeap> rtv_heap_, dsv_heap_;
   uint32_t rtv_stride_ = 0, dsv_stride_ = 0;
   std::vector<uint32_t> free_rtv_, free_dsv_;
