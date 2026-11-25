@@ -1,0 +1,83 @@
+diff --git a/include/rex/guest.h b/include/rex/guest.h
+index 1d64bcfa..89c02f05 100644
+--- a/include/rex/guest.h
++++ b/include/rex/guest.h
+@@ -96,6 +96,12 @@ class IPhysicalMemory {
+    * @return The value, or an error when the address is outside physical memory.
+    */
+   [[nodiscard]] virtual Result<u32> LoadAcquire32(u32 address) = 0;
++
++  /**
++   * Returns whether the title has the page at a physical address allocated and accessible. The
++   * answer holds while the caller has the write watch lock.
++   */
++  virtual bool IsPhysicalAccessible(u32 address) = 0;
+ };
+ 
+ class IPhysicalWriteWatch {
+diff --git a/src/gpu/xenos/shared_memory.cpp b/src/gpu/xenos/shared_memory.cpp
+index 7db4abed..8e5b2b4c 100644
+--- a/src/gpu/xenos/shared_memory.cpp
++++ b/src/gpu/xenos/shared_memory.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include <algorithm>
++#include <bit>
+ #include <cstring>
+ #include <memory>
+ #include <utility>
+@@ -286,6 +287,21 @@ void SharedMemory::MarkRangeValid(u32 start, u32 length, bool written_by_gpu) {
+       if (i == valid_block_last && (valid_page_last & 63) != 63) {
+         valid_bits &= (static_cast<u64>(1) << ((valid_page_last & 63) + 1)) - 1;
+       }
++      if (written_by_gpu) {
++        // The GPU runs behind the title, so a resolve can land in memory the title has freed. Such
++        // pages cannot be watched. Kept valid, they would hide what the title writes there after
++        // it allocates them again.
++        u64 freed = 0;
++        for (u64 bits = valid_bits; bits != 0; bits &= bits - 1) {
++          const u32 bit = static_cast<u32>(std::countr_zero(bits));
++          if (!physical_memory_.IsPhysicalAccessible(((i << 6) + bit) << page_size_log2_)) {
++            freed |= static_cast<u64>(1) << bit;
++          }
++        }
++        system_page_flags_valid_[i] &= ~freed;
++        system_page_flags_valid_and_gpu_written_[i] &= ~freed;
++        valid_bits &= ~freed;
++      }
+       system_page_flags_valid_[i] |= valid_bits;
+       u64& gpu_written = system_page_flags_valid_and_gpu_written_[i];
+       gpu_written = written_by_gpu ? (gpu_written | valid_bits) : (gpu_written & ~valid_bits);
+diff --git a/src/kernel/title_context.cpp b/src/kernel/title_context.cpp
+index d0268a33..9474420b 100644
+--- a/src/kernel/title_context.cpp
++++ b/src/kernel/title_context.cpp
+@@ -156,6 +156,15 @@ Result<u32> TitleContext::LoadAcquire32(u32 address) {
+       std::memory_order_acquire);
+ }
+ 
++bool TitleContext::IsPhysicalAccessible(u32 address) {
++  if (!InPhysical(address, 1)) {
++    return false;
++  }
++  u32 protect = 0;
++  return StateOf(runtime_).GetAddressSpace()->GetPhysicalHeap()->QueryProtect(address, &protect) &&
++         (protect & (kMemoryProtectRead | kMemoryProtectWrite)) != 0;
++}
++
+ ScopeGuard TitleContext::AddWriteListener(IPhysicalWriteListener& listener) {
+   kernel::GuestAddressSpace* memory = StateOf(runtime_).GetAddressSpace();
+   void* registration = memory->RegisterPhysicalMemoryInvalidationCallback(&WriteThunk, &listener);
+diff --git a/src/kernel/title_context.h b/src/kernel/title_context.h
+index cf11c179..be62a4b8 100644
+--- a/src/kernel/title_context.h
++++ b/src/kernel/title_context.h
+@@ -45,6 +45,7 @@ class TitleContext final : public IPhysicalMemory,
+   [[nodiscard]] Result<std::span<std::byte>> GetWritablePhysicalSpan(PhysicalRange range) override;
+   [[nodiscard]] Result<void> StoreRelease32(u32 address, u32 value) override;
+   [[nodiscard]] Result<u32> LoadAcquire32(u32 address) override;
++  bool IsPhysicalAccessible(u32 address) override;
+   [[nodiscard]] ScopeGuard AddWriteListener(IPhysicalWriteListener& listener) override;
+   void WatchPhysicalWrites(PhysicalRange range) override;
+   [[nodiscard]] ScopeGuard LockWriteWatches() override;

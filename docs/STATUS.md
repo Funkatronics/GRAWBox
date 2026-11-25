@@ -38,7 +38,8 @@ Updated 2026-11-24.
 - **HUD noise:** the border, the top-left icons and the minimap box show scrambled texture data; the
   tester sees the same in Xenia Canary. Matches graw360 issue #1 (resolve into freed memory leaves HUD
   textures stale on the GPU). Its fix is not in SDK 0.11 (`SharedMemory::MarkRangeValid` in
-  `src/gpu/xenos/shared_memory.cpp`). Not proven here yet. Porting it needs an SDK source build.
+  `src/gpu/xenos/shared_memory.cpp`). Ported in `patches/`; the patched
+  SDK builds and GRAW 1 boots on it. Effect on the HUD not confirmed yet (needs a real GPU).
 - Cross-Com and tactical map on a real GPU: not reported yet.
 ## GRAW 2 campaign
 
@@ -58,7 +59,7 @@ Updated 2026-11-24.
 
 GRAW 2: tracked project, jump table audit, start a mission. GRAW 1:
 
-port the HUD texture fix, then check Cross-Com and the tactical map.
+confirm the HUD texture fix on a real GPU, then check Cross-Com and the tactical map.
 
 ## Not verified
 
