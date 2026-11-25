@@ -100,8 +100,16 @@ See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a
 
 - **GRAW 1**: menu at 1x, 2x and 3x, and the first mission at 1x, draw on it: world, shadows, characters and HUD. The
   emulated renderer gives a black world on WARP, so WARP can now be used to look at 3D.
-- **GRAW 2**: boots, loads a mission and draws the opening scene with its video panel, at 1x. 2x and 3x in a mission not tried.
-- **Cross-Com may be broken on it in GRAW 1** (tester report). The narration panel opens and stays grey.
+- **GRAW 2**: menu and the opening of the first mission at 1x and 2x: world, characters, video panel. No horizontal
+  line at row 512 in the 2x captures (the emulated renderer's bug). Its HUD clips itself with a depth mask that only color
+  clears of the same EDRAM tiles reset: done in `RenderTargets::FillDepths`.
+- **Ghosting explained**: the last pass of both games (`CFC1BD3557C8B735`, `F17045F9B4E36E54`) mixes the picture, by
+  1 / depth / 1000, with a blurred 256x200 copy and a copy displaced by sines of time (about 1.3 pixels at 720p). Same
+  constants in both games, so it is the games' own haze, drawn as they ask. `native.haze=false` removes it: in the same GRAW 2
+  frame the distant towers and signs are then sharp. Whether the console looked the same was not compared.
+- **F9** switches both ways in the GRAW 1 menu on WARP.
+- **Cross-Com may be broken on it in GRAW 1** (tester report, watching a WARP run). Not settled: at seconds per frame the
+  emulated renderer's panel is empty too, the clip running in real time, and one native run did draw a 160x120 video image.
 - The GRAW 1 build had cached the stock SDK's path, so it was not using the patched SDK; `tools/build.ps1` now sets it.
 
 ## Next
