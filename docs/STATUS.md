@@ -89,7 +89,8 @@ Updated 2026-11-24.
   but not the sky. Not black: the tester describes a row of pixels where shadows seem not to be drawn, with its
   color following what is behind it. In one capture it sits at row 512 of 720, which would be a boundary between
   256-row tiles. Seen at 2x and 3x, gone at 1x, so it comes with resolution scaling;
-  a tile seam is the likely cause.
+  a tile seam is the likely cause. No change with `resolve_resolution_scale_fill_half_pixel_offset=false` or the ROV path;
+  `half_pixel_offset=false` makes it at least twice as thick. Canary's viewport fix (`6579cc2a4`) did not help and was undone.
 - `sub_823A56C0` is about 1 MB of generated code. Cause not checked.
 - Tracked in `games/graw2-campaign/`; `tools/build.ps1 -Game graw2` builds it on the patched SDK.
 
