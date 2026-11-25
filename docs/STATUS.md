@@ -44,15 +44,15 @@ Updated 2026-11-24.
 - The tactical map works in the tutorial: map, legend and movement.
 ### GRAW 1 open issues (real GPU, emulated renderer)
 
-- **World goes mostly black** near the end of the first mission, in combat, depending on view direction. Blocks
-  progress. With `--gpu.xenos.occlusion_query_enable=false` it did not happen in one run of the same spot, so
-  occlusion queries are the likely cause. Workaround: keep that setting. Xenia Canary has since rewritten
-  its query code; SDK 0.11 has the older one. Nothing in the log at that point.
+- **World went mostly black** once, near the end of the first mission, in combat, depending on view direction. Seen at
+  30 Hz after about 34 minutes in one session, occlusion queries on. Not seen in a short fresh run at 30 Hz with
+  `--gpu.xenos.occlusion_query_enable=false`, nor at 60 fps with queries on at 2x and 3x resolution (same spot,
+  different actions). Cause not known; occlusion queries are one suspect. Nothing in the log at that point.
   Reading the SDK 0.11 code: each finished query ends the submission and waits for the GPU, and a single
   active query is dropped when a submission ends or an address does not match. Canary's replacement
   (`fbd620c22`, `3d233a5b2`, `692cd59cf`) is asynchronous, but is thousands of lines in D3D12, Vulkan and the shader translators.
-- **Frame pacing is poor at the 30 Hz setting** (unstable, stutters, spikes through the whole first mission). The same
-  spot at 60 fps and 2x resolution runs much better, not perfect. Tester reports; not measured.
+- **Frame pacing is poor at the 30 Hz setting** (unstable, stutters, spikes through the whole first mission). 60 fps at 2x
+  runs much better, and 60 fps at 3x (4K) runs well, both with queries on. Tester reports; not measured.
 - **One squadmate loses weapon, outline and marker** together. Seen at 60 Hz and at 30 Hz, so it is not
   frame rate, and with occlusion queries off. Squad orders still work. graw360 #7, open there. Cause not known.
 - **Dark polygon in the sky** (helicopter scene): a large straight-edged darker area that moves with the view.
