@@ -1,0 +1,27 @@
+# Keys for --hid.drivers=keyboard. Uncomment and change; names: A-Z 0-9 F1-F24 SPACE ENTER ESC TAB
+# BACKSPACE LSHIFT RSHIFT LCTRL RCTRL LALT RALT CAPS UP DOWN LEFT RIGHT INSERT DELETE HOME END PAGEUP
+# PAGEDOWN MOUSE1 (left) MOUSE2 (right) MOUSE3 (middle) MOUSE4 MOUSE5. Several keys may share a control.
+#
+# mouse_sensitivity = 1.0
+# mouse_deadzone = 0.24
+# mouse_invert = 0
+# move_forward = W
+# move_back = S
+# move_left = A
+# move_right = D
+# right_trigger = MOUSE1
+# left_trigger = MOUSE2
+# right_stick_press = MOUSE3 Z
+# left_stick_press = LSHIFT
+# left_bumper = Q
+# right_bumper = F
+# a = SPACE ENTER
+# b = C BACKSPACE
+# x = R
+# y = E
+# dpad_up = UP 1
+# dpad_down = DOWN 2
+# dpad_left = LEFT 3
+# dpad_right = RIGHT 4
+# start = ESC
+# back = TAB M

@@ -12,6 +12,15 @@ add_executable(graw2_campaign WIN32 src/main.cpp src/native_hooks.cpp
 target_include_directories(graw2_campaign PRIVATE . ../common ../../native/include)
 rexglue_setup_target(graw2_campaign)
 
+add_library(rexhid-keyboard SHARED ../../input/keyboard_driver.cpp)
+set_target_properties(
+  rexhid-keyboard PROPERTIES DEBUG_POSTFIX d RELWITHDEBINFO_POSTFIX rd
+                             RUNTIME_OUTPUT_DIRECTORY $<TARGET_FILE_DIR:graw2_campaign>
+)
+target_compile_definitions(rexhid-keyboard PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_link_libraries(rexhid-keyboard PRIVATE rex::base user32)
+rexglue_link_host_allocator(rexhid-keyboard)
+
 option(GRAWBOX_TEST_TOOLS "Build the scripted controller for unattended tests" ON)
 if (GRAWBOX_TEST_TOOLS)
   add_library(rexhid-autopilot SHARED ../../tools/autopilot/autopilot_driver.cpp)

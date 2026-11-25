@@ -24,6 +24,7 @@ if ($Runtime) {
     Get-ChildItem $Runtime -File | Where-Object { $_.Name -match '^(msvcp|vcruntime|concrt|vccorlib)' } |
         Copy-Item -Destination $bin
 }
+Copy-Item (Join-Path $root 'input\grawbox-keys.txt') $bin
 foreach ($needed in "${Game}_campaign.exe", 'grawbox_native.dll', 'rexgpu-xenos-d3d12.dll') {
     if (-not (Test-Path (Join-Path $bin $needed))) { throw "$needed is missing from $release" }
 }
@@ -34,7 +35,8 @@ $scripts = @(
     @('NATIVE-1440P', 'native', 2, ''),
     @('NATIVE-4K', 'native', 3, ''),
     @('NATIVE-4K-NO-HAZE', 'native', 3, '--native.haze=false'),
-    @('EMULATED-THEN-F9', 'emulated', 3, '')
+    @('EMULATED-THEN-F9', 'emulated', 3, ''),
+    @('NATIVE-4K-KEYBOARD', 'native', 3, '--hid.drivers=keyboard,sdl3 --hid.shared_pads=true')
 )
 foreach ($s in $scripts) {
     $lines = @(
@@ -43,7 +45,7 @@ foreach ($s in $scripts) {
         '  pause', '  exit /b 1', ')',
         ("start `"`" `"bin-native\${Game}_campaign.exe`" `"--title.game_root=%~dp0game`" " +
             "--title.entry=$entry `"--app.user_root=%~dp0user`" `"--app.cache_root=%~dp0cache-native`" " +
-            "`"--log.file_name=%~dp0native.log`" --gpu.driver=d3d12 --hid.drivers=sdl3,xinput --kernel.headless=true " +
+            "`"--log.file_name=%~dp0native.log`" --gpu.driver=d3d12 $(if ($s[3] -notmatch 'hid.drivers') { '--hid.drivers=sdl3,xinput ' })--kernel.headless=true " +
             '--ui.video_mode_width=1280 --ui.video_mode_height=720 --ui.fullscreen=true ' +
             "--native.renderer=$($s[1]) --native.resolution_scale=$($s[2]) " +
             "--gpu.resolution_scale_x=$($s[2]) --gpu.resolution_scale_y=$($s[2]) $($s[3])").TrimEnd()
