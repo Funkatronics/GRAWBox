@@ -40,14 +40,16 @@ Updated 2026-11-24.
   box. The video tile where speakers appear also shows correctly. No visual issues seen in the tutorial.
 - Runs at 60 fps in the tutorial (the console ran at 30). Sharp frame time spikes without a shader cache:
   `app.cache_root` is empty by default, which keeps none. With it set, the tester reports much smoother play (not measured).
-- graw360 reports that game logic breaks above about 30 fps (vanishing weapons, squad orders, rally
-  point). Not checked here. `ui.video_mode_refresh_rate=30` is the setting to compare with.
+- graw360 reports game logic problems above 30 fps. The weapon problem is not one of them (see below).
 - The tactical map works in the tutorial: map, legend and movement.
 ### GRAW 1 open issues (real GPU, emulated renderer)
 
-- **Squadmate loses weapon, blue marker and outline** (tutorial, 60 Hz; squad orders still work). Not seen
-  so far at 30 Hz; more testing needed. Same as graw360 #7 and maybe #19, both open there; graw360 also
-  saw #7 once at 30 fps.
+- **World goes mostly black** near the end of the first mission, in combat, depending on view direction. Blocks
+  progress. With `--gpu.xenos.occlusion_query_enable=false` it did not happen in one run of the same spot, so
+  occlusion queries are the likely cause. Workaround: keep that setting. Xenia Canary has since rewritten
+  its query code; SDK 0.11 has the older one. Nothing in the log at that point.
+- **One squadmate loses weapon, outline and marker** together. Seen at 60 Hz and at 30 Hz, so it is not
+  frame rate, and with occlusion queries off. Squad orders still work. graw360 #7, open there. Cause not known.
 - **Dark polygon in the sky** (helicopter scene): a large straight-edged darker area that moves with the view.
   Looks like part of the sky clipped away. Untested idea: the missing `force_depth_clamp` setting, which Xenia Canary's
   tracker marks as required for this game. graw360 #32 is similar. Minor.
@@ -70,7 +72,7 @@ Updated 2026-11-24.
 
 GRAW 2: tracked project, jump table audit, start a mission. GRAW 1:
 
-game logic at 60 fps, squad and drone Cross-Com feeds, loading a save, later missions.
+the squadmate problem, occlusion queries, squad and drone Cross-Com feeds, loading a save, later missions.
 
 ## Not verified
 
