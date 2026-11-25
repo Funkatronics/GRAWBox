@@ -21,3 +21,5 @@
 - **2026-11-24, launcher language:** the owner prefers Rust. To be settled when the Windows launcher starts.
 - **2026-11-24, issues:** bugs go in GitHub issues. Screenshots showing only the game, with no desktop, are allowed
   there. No images in the repository itself.
+- **2026-11-24, feature order:** first get everything working, including visual bugs that are always present (the
+  horizontal line, ghosting). Then mouse and keyboard and/or button remapping, with correct in-game button prompts.
