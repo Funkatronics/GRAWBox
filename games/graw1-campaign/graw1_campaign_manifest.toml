@@ -1,0 +1,27 @@
+# GRAW 1 campaign: Yeti_Final_Xenon.exe with title update 0.0.2.1 (title 555307D5).
+# tools/build.ps1 stages the player's own files; nothing from them belongs in this repository.
+
+[project]
+name = "graw1_campaign"
+sdk_version = "0.11.0"
+game_root = "../../private/graw1/campaign"
+hook_sources = ["src"]
+
+[entrypoint]
+file_path = "../../private/graw1/campaign/Yeti_Final_Xenon.exe"
+out_directory_path = "generated/campaign"
+includes = []
+
+# HUD sprite blend modes, in sub_821B8F80. SDK 0.11 reads this table as one case on the wrong
+# register. Cause and labels found by graw360-recomp (MIT) for the unpatched executable; the update
+# moves them by -0x78. Checked against the loaded updated image.
+[[entrypoint.switch_tables]]
+address = 0x821B9164
+register = 7
+labels = [
+  0x821B91D4, 0x821B91D0, 0x821B91E0, 0x821B91EC, 0x821B91FC, 0x821B920C,
+  0x821B9208, 0x821B9218, 0x821B922C, 0x821B9228, 0x821B9238, 0x821B924C,
+  0x821B9248, 0x821B9258, 0x821B926C, 0x821B9268, 0x821B9278, 0x821B9288,
+  0x821B9294, 0x821B92A0, 0x821B92AC, 0x821B92B8, 0x821B91D4, 0x821B91D4,
+  0x821B91D4, 0x821B91D4,
+]

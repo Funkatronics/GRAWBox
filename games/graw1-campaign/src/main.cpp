@@ -1,0 +1,12 @@
+// GRAW 1 campaign program.
+
+#include <rex/app/title_app.h>
+
+#include "generated/campaign/graw1_campaign_init.h"
+
+class CampaignApp : public rex::app::TitleApp {
+ public:
+  CampaignApp() : TitleApp("graw1_campaign", kPPCImageConfig) {}
+};
+
+REX_TITLE_APP(CampaignApp)
