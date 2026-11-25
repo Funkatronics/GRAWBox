@@ -1,5 +1,7 @@
 #include "native_host.h"
 
+#include "../../input/keys.h"
+
 #include <rex/kernel/heap.h>
 #include <rex/kernel/thread_state.h>
 #include <rex/logging/log_category.h>
@@ -102,6 +104,20 @@ const char* Option(const char* name) {
   if (n == "native_haze") return Settings().haze.Get() ? "true" : "false";
   if (n == "native_anisotropy")
     return (values[n] = std::to_string(Settings().anisotropy.Get())).c_str();
+  if (n == "native_prompts") {
+    std::string prompts = Settings().prompts.Get();
+    if (prompts == "auto") {
+      auto drivers = REX_SETTINGS().Find("hid.drivers");
+      prompts = drivers && (*drivers)->GetText().find("keyboard") != std::string::npos
+                    ? "keyboard" : "controller";
+    }
+    if (prompts != "keyboard") return nullptr;
+    wchar_t path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    return (values[n] = keys::PromptLabels(keys::Load(
+                std::filesystem::path(path).parent_path() / "grawbox-keys.txt")))
+        .c_str();
+  }
   if (n == "native_resolution_scale")
     return (values[n] = std::to_string(Settings().resolution_scale.Get())).c_str();
   return nullptr;

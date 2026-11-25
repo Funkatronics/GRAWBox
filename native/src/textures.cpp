@@ -1,6 +1,8 @@
 // GRAW native renderer (ported from pgr4-native 8ea20d5, MIT; see native/README.md): texture cache (see textures.h).
 #include "textures.h"
 
+#include "prompts.h"
+
 #include "clock.h"
 #include "profile.h"
 
@@ -247,6 +249,10 @@ bool TextureCache::UploadsDone() {
 uint64_t TextureCache::RunUntile(const UntileJob& job, std::vector<uint8_t>* scratch) {
   const uint64_t t0 = NowNs();
   UntileTexture(job.key, job.layout, job.guest, job.footprints, job.dst, scratch);
+  if (!job.footprints.empty() && job.guest.base)
+    ApplyPrompts(job.key, job.guest.base,
+                 std::min<size_t>(job.guest.base_size, job.layout.base.level_data_extent_bytes),
+                 job.dst + job.footprints[0].offset, job.footprints[0]);
   const uint64_t ns = NowNs() - t0;
   if (ns > 500000) {
     const TextureKey& key = job.key;

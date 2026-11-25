@@ -22,6 +22,9 @@ class NativeSettings : public rex::SettingOwner {
               "The games' distance haze, which blurs and doubles what is far away", rex::kRestart);
   REX_SETTING(rex::i32, anisotropy, 1, "Anisotropic texture filtering, 1 for the game's own",
               rex::Range{1, 16}, rex::kRestart);
+  REX_SETTING(std::string, prompts, "auto",
+              "Button prompts: controller, keyboard, or auto for the keyboard driver's choice",
+              rex::Allowed("auto", "controller", "keyboard"), rex::kRestart);
   REX_SETTING(bool, vsync, true, "Wait for the display when the native renderer presents",
               rex::kRestart);
 };

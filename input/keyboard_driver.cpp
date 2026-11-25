@@ -30,6 +30,8 @@
 #include <rex/hid/pad.h>
 #include <rex/module.h>
 
+#include "keys.h"
+
 namespace grawbox::keyboard {
 
 using namespace rex;
@@ -37,68 +39,7 @@ using namespace rex::hid;
 
 constexpr PadDeviceID kPad{0x4742584Bull};
 
-enum Control : size_t {
-  kUp, kDown, kLeft, kRight, kStart, kBack, kLS, kRS, kLB, kRB, kA, kB, kX, kY,
-  kLT, kRT, kMoveUp, kMoveDown, kMoveLeft, kMoveRight, kControlCount
-};
-
-struct ControlInfo {
-  const char* name;
-  u16 button;
-  const char* keys;
-};
-
-constexpr std::array<ControlInfo, kControlCount> kControls = {{
-    {"dpad_up", kPadDPadUp, "UP 1"},
-    {"dpad_down", kPadDPadDown, "DOWN 2"},
-    {"dpad_left", kPadDPadLeft, "LEFT 3"},
-    {"dpad_right", kPadDPadRight, "RIGHT 4"},
-    {"start", kPadStart, "ESC"},
-    {"back", kPadBack, "TAB M"},
-    {"left_stick_press", kPadLeftThumb, "LSHIFT"},
-    {"right_stick_press", kPadRightThumb, "MOUSE3 Z"},
-    {"left_bumper", kPadLeftShoulder, "Q"},
-    {"right_bumper", kPadRightShoulder, "F"},
-    {"a", kPadA, "SPACE ENTER"},
-    {"b", kPadB, "C BACKSPACE"},
-    {"x", kPadX, "R"},
-    {"y", kPadY, "E"},
-    {"left_trigger", 0, "MOUSE2"},
-    {"right_trigger", 0, "MOUSE1"},
-    {"move_forward", 0, "W"},
-    {"move_back", 0, "S"},
-    {"move_left", 0, "A"},
-    {"move_right", 0, "D"},
-}};
-
-int KeyFromName(std::string name) {
-  for (char& c : name) c = char(std::toupper(static_cast<unsigned char>(c)));
-  if (name.size() == 1 && std::isalnum(static_cast<unsigned char>(name[0]))) return name[0];
-  static const std::map<std::string, int> names = {
-      {"MOUSE1", VK_LBUTTON},  {"MOUSE2", VK_RBUTTON}, {"MOUSE3", VK_MBUTTON},
-      {"MOUSE4", VK_XBUTTON1}, {"MOUSE5", VK_XBUTTON2}, {"UP", VK_UP},
-      {"DOWN", VK_DOWN},       {"LEFT", VK_LEFT},      {"RIGHT", VK_RIGHT},
-      {"SPACE", VK_SPACE},     {"ENTER", VK_RETURN},   {"ESC", VK_ESCAPE},
-      {"TAB", VK_TAB},         {"BACKSPACE", VK_BACK}, {"LSHIFT", VK_LSHIFT},
-      {"RSHIFT", VK_RSHIFT},   {"LCTRL", VK_LCONTROL}, {"RCTRL", VK_RCONTROL},
-      {"LALT", VK_LMENU},      {"RALT", VK_RMENU},     {"CAPS", VK_CAPITAL},
-      {"INSERT", VK_INSERT},   {"DELETE", VK_DELETE},  {"HOME", VK_HOME},
-      {"END", VK_END},         {"PAGEUP", VK_PRIOR},   {"PAGEDOWN", VK_NEXT}};
-  if (const auto found = names.find(name); found != names.end()) return found->second;
-  if (name.size() >= 2 && name[0] == 'F') {
-    const int n = std::atoi(name.c_str() + 1);
-    if (n >= 1 && n <= 24) return VK_F1 + n - 1;
-  }
-  return 0;
-}
-
-std::vector<int> ParseKeys(const std::string& text) {
-  std::vector<int> keys;
-  std::istringstream in(text);
-  for (std::string name; in >> name;)
-    if (const int key = KeyFromName(name)) keys.push_back(key);
-  return keys;
-}
+using namespace grawbox::keys;
 
 // Sums the mouse's raw motion on a thread of its own.
 class Mouse {
@@ -157,10 +98,11 @@ class Driver final : public IInputDriver {
   std::string_view GetName() const override { return "keyboard"; }
 
   Result<void> Initialize(IDriverContext&) override {
-    for (size_t i = 0; i < kControlCount; ++i) keys_[i] = ParseKeys(kControls[i].keys);
     wchar_t path[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
-    Load(std::filesystem::path(path).parent_path() / "grawbox-keys.txt");
+    settings_ = Load(std::filesystem::path(path).parent_path() / "grawbox-keys.txt");
+    for (size_t i = 0; i < kControlCount; ++i)
+      for (const std::string& name : settings_.keys[i]) keys_[i].push_back(KeyFromName(name));
     mouse_ = std::make_unique<Mouse>();
     last_ = std::chrono::steady_clock::now();
     return Ok();
@@ -216,7 +158,7 @@ class Driver final : public IInputDriver {
       rate_y_ = rate_y_ * keep + dy / dt * (1 - keep);
     }
     state.thumb_rx = Axis(Deflect(rate_x_));
-    state.thumb_ry = Axis((invert_ ? 1 : -1) * Deflect(rate_y_));
+    state.thumb_ry = Axis((settings_.mouse_invert ? 1 : -1) * Deflect(rate_y_));
     return state;
   }
 
@@ -239,9 +181,9 @@ class Driver final : public IInputDriver {
   // Counts per second to deflection: past the games' dead zone at once, full at 1500 counts per
   // second with sensitivity 1.
   double Deflect(double rate) const {
-    const double a = std::abs(rate) * sensitivity_ / 1500.0;
+    const double a = std::abs(rate) * settings_.mouse_sensitivity / 1500.0;
     if (a < 0.002) return 0;
-    return std::copysign(deadzone_ + (1 - deadzone_) * std::min(a, 1.0), rate);
+    return std::copysign(settings_.mouse_deadzone + (1 - settings_.mouse_deadzone) * std::min(a, 1.0), rate);
   }
 
   // Keeps the cursor inside the game's window while it has the focus.
@@ -260,31 +202,12 @@ class Driver final : public IInputDriver {
     }
   }
 
-  void Load(const std::filesystem::path& path) {
-    std::ifstream file(path);
-    for (std::string line; std::getline(file, line);) {
-      line = line.substr(0, line.find('#'));
-      const size_t equals = line.find('=');
-      if (equals == std::string::npos) continue;
-      std::istringstream name_in(line.substr(0, equals));
-      std::string name;
-      name_in >> name;
-      const std::string value = line.substr(equals + 1);
-      if (name == "mouse_sensitivity") sensitivity_ = std::clamp(std::atof(value.c_str()), 0.05, 20.0);
-      else if (name == "mouse_deadzone") deadzone_ = std::clamp(std::atof(value.c_str()), 0.0, 0.9);
-      else if (name == "mouse_invert") invert_ = std::atoi(value.c_str()) != 0;
-      for (size_t i = 0; i < kControlCount; ++i)
-        if (name == kControls[i].name) keys_[i] = ParseKeys(value);
-    }
-  }
-
   std::mutex mutex_;
   std::array<std::vector<int>, kControlCount> keys_;
   std::unique_ptr<Mouse> mouse_;
   std::chrono::steady_clock::time_point last_;
   double rate_x_ = 0, rate_y_ = 0;
-  double sensitivity_ = 1.0, deadzone_ = 0.24;
-  bool invert_ = false;
+  Settings settings_;
   bool locked_ = false;
 };
 
