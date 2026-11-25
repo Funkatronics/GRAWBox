@@ -75,8 +75,10 @@ Updated 2026-11-24.
 - An "invalid" fetch constant repeats in the log, as in GRAW 1 (a different constant).
 - Jump tables checked against the loaded updated image: 440 in the campaign and 820 in the AI module, 0 wrong.
 - GRAW 1 has the same setjmp pair (`sub_825AFBD0`, `sub_825AFAB0`), not declared; its identified callers are the shader compiler.
-- First real GPU run crashed seconds after the menu: `0x82110F28` was a missed function. 51 missed functions added to
-  the manifest; two other candidates split functions and were dropped, 14 uncertain ones left out.
+- First real GPU run crashed seconds after start on a missed function (`0x82110F28`). The manifest now lists 53
+  missed functions, from tables in the loaded image. Two candidates split functions and were dropped; 14 uncertain ones
+  left out. Under WARP it now goes from New Campaign to the mission loading screen, no crash in 120 s; the
+  mission itself had not loaded by then.
 - `sub_823A56C0` is about 1 MB of generated code. Cause not checked.
 - Tracked in `games/graw2-campaign/`; `tools/build.ps1 -Game graw2` builds it on the patched SDK.
 

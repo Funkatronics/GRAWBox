@@ -18,6 +18,8 @@ includes = []
 # Functions reached only through tables or pointers (tools/find_missed_functions.py from
 # graw360-recomp, on the loaded updated image).
 [entrypoint.functions]
+0x82110F58 = {}
+0x82110F78 = {}
 0x82110F40 = {}
 0x82110F48 = {}
 0x82110F50 = {}
