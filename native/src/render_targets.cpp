@@ -10,6 +10,7 @@
 #include <rex/logging.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 
@@ -388,11 +389,13 @@ void RenderTargets::Clear(ID3D12GraphicsCommandList* list, const SurfaceRegs& re
     v.flags = 1;
     std::memcpy(v.color, p.color, sizeof(v.color));
     Defer(list, rt, v, p.rects);
+    const uint64_t since = fills_.seq();
     if (edram.empty()) {
       RecordFill(*rt, {0, 0, LONG(rt->pitch), LONG(edram_rows(*rt))}, p.color);
     } else {
       for (const D3D12_RECT& r : edram) RecordFill(*rt, r, p.color);
     }
+    if (fills_.seq() != since) FillDepths(list, since);
     rt->fill_seq = fills_.seq();
   }
   D3D12_CLEAR_FLAGS df = D3D12_CLEAR_FLAGS(0);
@@ -482,6 +485,43 @@ void RenderTargets::PrepareRead(ID3D12GraphicsCommandList* list, RenderTarget* r
 
 void RenderTargets::RecordFill(const RenderTarget& rt, const D3D12_RECT& r, const float color[4]) {
   fills_.Record(GridOf(rt), rt.guest_format, r, color);
+}
+
+void RenderTargets::FillDepths(ID3D12GraphicsCommandList* list, uint64_t since) {
+  for (auto& [key, owned] : targets_) {
+    RenderTarget* rt = owned.get();
+    if (!rt->depth) continue;
+    fills_.ForEach(
+        since, GridOf(*rt), 0, rt->width, rt->height,
+        [&](const EdramFills::Fill& f, const D3D12_RECT* rects, uint32_t nr) {
+          uint32_t bits = 0;
+          auto unorm = [](float v, float scale) {
+            return uint32_t(std::clamp(v, 0.0f, 1.0f) * scale + 0.5f);
+          };
+          if (f.format == 0)
+            bits = unorm(f.color[0], 255) | unorm(f.color[1], 255) << 8 |
+                   unorm(f.color[2], 255) << 16 | unorm(f.color[3], 255) << 24;
+          else if (f.format == 2)
+            bits = unorm(f.color[0], 1023) | unorm(f.color[1], 1023) << 10 |
+                   unorm(f.color[2], 1023) << 20 | unorm(f.color[3], 3) << 30;
+          else if (f.color[0] || f.color[1] || f.color[2] || f.color[3])
+            return;  // formats whose bits are not worked out, zero apart
+          ClearValue v;
+          v.flags = D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL;
+          const uint32_t d24 = bits >> 8;
+          if (rt->guest_format == 1) {  // 20e4
+            const uint32_t m = d24 & 0xFFFFF, e = d24 >> 20;
+            v.depth = e ? std::bit_cast<float>(((e + 112) << 23) | (m << 3))
+                        : float(m) / 17179869184.0f;
+          } else {
+            v.depth = float(d24) / 16777215.0f;
+          }
+          v.depth = std::clamp(v.depth, 0.0f, 1.0f);
+          v.stencil = uint8_t(bits);
+          Defer(list, rt, v, std::vector<D3D12_RECT>(rects, rects + nr));
+        },
+        true);
+  }
 }
 
 void RenderTargets::DropFills(const RenderTarget& rt, uint32_t rows) {

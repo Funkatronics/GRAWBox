@@ -134,10 +134,12 @@ class EdramFills {
   // The fills recorded after `since` over a color surface (grid g, color format `format`,
   // width x height pixels), oldest first: `apply` gets each with its whole pixels as up to 3
   // rectangles clipped to the surface. Fills of another storage format, or of a shape that
-  // does not map onto g, are skipped (logged).
+  // does not map onto g, are skipped (logged). any_format: for a depth surface, which takes the
+  // fill's bits whatever its format.
   void ForEach(uint64_t since, const EdramGrid& g, uint32_t format, uint32_t width,
                uint32_t height,
-               const std::function<void(const Fill&, const Rect*, uint32_t)>& apply) const;
+               const std::function<void(const Fill&, const Rect*, uint32_t)>& apply,
+               bool any_format = false) const;
 
  private:
   static constexpr size_t kMaxFills = 32;

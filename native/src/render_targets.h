@@ -157,6 +157,9 @@ class RenderTargets {
 
   // EDRAM fills (EdramFills). `r`: pixels from rt's EDRAM base.
   void RecordFill(const RenderTarget& rt, const D3D12_RECT& r, const float color[4]);
+  // A color clear over the tiles of a depth surface leaves its bits there: GRAW 2's HUD tests a
+  // depth mask in tiles only the scene's color clears reset. Called after each color fill.
+  void FillDepths(ID3D12GraphicsCommandList* list, uint64_t since);
   // Drops the fills over rt's first `rows` rows of pixels.
   void DropFills(const RenderTarget& rt, uint32_t rows);
   // Clears color target `rt` to the EDRAM fills recorded over its tiles since its last use

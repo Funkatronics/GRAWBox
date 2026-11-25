@@ -124,12 +124,12 @@ void EdramFills::Drop(const EdramGrid& g, uint32_t rows) {
 
 void EdramFills::ForEach(
     uint64_t since, const EdramGrid& g, uint32_t format, uint32_t width, uint32_t height,
-    const std::function<void(const Fill&, const Rect*, uint32_t)>& apply) const {
+    const std::function<void(const Fill&, const Rect*, uint32_t)>& apply, bool any_format) const {
   const uint32_t end = GridEnd(g, height);
   format = StorageFormat(format);
   for (const Fill& f : fills_) {
     if (f.seq <= since || f.first_tile() >= end || f.end_tile() <= g.base) continue;
-    if (f.format != format) {
+    if (f.format != format && !any_format) {
       GRAW_LOG_FIRST(
           4, INFO,
           "GRAW native RT: EDRAM fill of format {} at tile {} not applied to format {} at base {}",
