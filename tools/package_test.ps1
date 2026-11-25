@@ -37,9 +37,9 @@ $scripts = @(
     @('NATIVE-4K-AO', 'native', 3, '--native.ambient_occlusion=80'),
     @('NATIVE-4K-AO-SHARP', 'native', 3, '--native.ambient_occlusion=80 --native.sharpness=0.5'),
     @('NATIVE-4K-HAZE-TUNING', 'native', 3, '--native.haze_tuning=true --native.ambient_occlusion=80 --native.sharpness=0.5'),
-    @('FLICKER-1-ONE-THREAD', 'native', 3, '', 'set GRAWBOX_NATIVE_RENDER_THREAD=false'),
-    @('FLICKER-2-NO-POST', 'native', 3, '--native.haze=original'),
-    @('FLICKER-3-NO-VSYNC', 'native', 3, '--native.vsync=false'),
+    @('CAPTURE-F12', 'native', 3, '', 'set GRAWBOX_NATIVE_CAPTURE_DIR=%~dp0captures& set GRAWBOX_NATIVE_CAPTURE_XENOS=false& set GRAWBOX_NATIVE_CAPTURE_BURST=6& set GRAWBOX_NATIVE_MARK_AUDIT=3& if not exist captures mkdir captures'),
+    @('FPS-120', 'native', 3, '--ui.video_mode_refresh_rate=120 --native.vsync=false'),
+    @('FPS-UNLOCKED', 'native', 3, '--gpu.vsync=false --native.vsync=false'),
     @('NATIVE-4K-ORIGINAL-HAZE', 'native', 3, '--native.haze=original'),
     @('EMULATED-THEN-F9', 'emulated', 3, ''),
     @('NATIVE-4K-KEYBOARD', 'native', 3, '--hid.drivers=keyboard,sdl3 --hid.shared_pads=true')
