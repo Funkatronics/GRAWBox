@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -20,6 +21,9 @@
 REXCVAR_DEFINE_STRING(graw_native_prompts, "", "GRAW native",
                       "Labels of the button prompts as <control>=<label>; each, empty for the games' "
                       "own buttons");
+
+REXCVAR_DEFINE_STRING(graw_native_prompt_dump, "", "GRAW native",
+                      "Debug: writes the small textures as uploaded to this folder, to find buttons");
 
 namespace graw::native {
 namespace {
@@ -90,7 +94,12 @@ constexpr Cell kGraw2Hud[] = {
     {"back", 835, 231, 34, 42, 836, 236, 32, 30},
 };
 
-// GRAW 1: one texture per button.
+// GRAW 1: some HUD icons, and a texture each for the menus' buttons.
+constexpr Cell kGraw1Hud[] = {
+    {"right_stick", 2, 66, 28, 28, 3, 67, 26, 26},
+    {"left_stick", 34, 66, 28, 28, 35, 67, 26, 26},
+    {"right_stick_press", 0, 97, 32, 31, 1, 100, 30, 26},
+};
 constexpr Cell kWholeA[] = {{"a", 0, 0, 32, 32, 1, 1, 28, 28}};
 constexpr Cell kWholeB[] = {{"b", 0, 0, 32, 32, 1, 1, 28, 28}};
 
@@ -98,8 +107,9 @@ constexpr Cell kWholeB[] = {{"b", 0, 0, 32, 32, 1, 1, 28, 28}};
 constexpr Sheet kSheets[] = {
     {0xE8F40274CE21F2AEull, xenos::TextureFormat::k_8_8_8_8, 256, 1024, true, kGraw2Font},
     {0x97B5A183CB0ABE72ull, xenos::TextureFormat::k_DXT2_3, 1024, 512, false, kGraw2Hud},
-    {0, xenos::TextureFormat::k_DXT2_3, 32, 32, false, kWholeA},
-    {0, xenos::TextureFormat::k_DXT2_3, 32, 32, false, kWholeB},
+    {0x07B5160213F13C00ull, xenos::TextureFormat::k_DXT2_3, 32, 32, false, kWholeA},
+    {0x34D222E8E813A554ull, xenos::TextureFormat::k_DXT2_3, 32, 32, false, kWholeB},
+    {0xA9CDF1F3B2007BF3ull, xenos::TextureFormat::k_DXT2_3, 128, 128, false, kGraw1Hud},
 };
 
 const std::map<std::string, std::string>& Labels() {
@@ -300,6 +310,21 @@ void DrawCell(const Sheet& sheet, const Cell& cell, uint8_t* dst, const HostSubr
 
 void ApplyPrompts(const TextureKey& key, const uint8_t* guest, size_t guest_bytes, uint8_t* dst,
                   const HostSubresource& base) {
+  static const std::string dump = REXCVAR_GET(graw_native_prompt_dump);
+  if (!dump.empty() && guest && key.width <= 128 && key.height <= 128 && key.width >= 16 &&
+      key.height >= 16 && key.format == xenos::TextureFormat::k_DXT2_3) {
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+    const uint64_t hash = XXH3_64bits(guest, guest_bytes);
+    char name[64];
+    std::snprintf(name, sizeof(name), "\\%016llX_%ux%u.bin", (unsigned long long)hash, key.width,
+                  key.height);
+    if (FILE* file = std::fopen((dump + name).c_str(), "wb")) {
+      for (uint32_t y = 0; y < base.block_rows; ++y)
+        std::fwrite(dst + size_t(y) * base.row_pitch, 1, base.row_bytes, file);
+      std::fclose(file);
+    }
+  }
   if (REXCVAR_GET(graw_native_prompts).empty() || !guest || base.level) return;
   bool candidate = false;
   for (const Sheet& s : kSheets)
