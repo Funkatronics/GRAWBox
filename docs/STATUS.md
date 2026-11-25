@@ -33,9 +33,13 @@ Updated 2026-11-24.
 - A driver module must call `rexglue_link_host_allocator`, or the program dies with heap corruption.
 - `games/graw1-campaign/` and `tools/build.ps1` are the tracked GRAW 1 campaign project: they build and
   boot to the menu. Translate before CMake configures, or the sources are left out.
-- A private test folder (Release build, launch script, checklist) is ready for a play-test on a real
-  GPU. Results pending.
-
+- **Play-test on a real GPU (Release build): the tutorial runs and the 3D world renders.** So the black
+  scene was specific to WARP; do not judge 3D on WARP. Performance is poor (emulated GPU, not measured).
+- **HUD noise:** the border, the top-left icons and the minimap box show scrambled texture data; the
+  tester sees the same in Xenia Canary. Matches graw360 issue #1 (resolve into freed memory leaves HUD
+  textures stale on the GPU). Its fix is not in SDK 0.11 (`SharedMemory::MarkRangeValid` in
+  `src/gpu/xenos/shared_memory.cpp`). Not proven here yet. Porting it needs an SDK source build.
+- Cross-Com and tactical map on a real GPU: not reported yet.
 ## GRAW 2 campaign
 
 - Disc (1,811 files) and title update extracted; update blocks hash-checked.
@@ -54,7 +58,7 @@ Updated 2026-11-24.
 
 GRAW 2: tracked project, jump table audit, start a mission. GRAW 1:
 
-Find out why the 3D scene is black, on a real GPU. Then check Cross-Com and the tactical map.
+port the HUD texture fix, then check Cross-Com and the tactical map.
 
 ## Not verified
 
