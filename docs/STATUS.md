@@ -43,6 +43,16 @@ Updated 2026-11-24.
 - graw360 reports that game logic breaks above about 30 fps (vanishing weapons, squad orders, rally
   point). Not checked here. `ui.video_mode_refresh_rate=30` is the setting to compare with.
 - The tactical map works in the tutorial: map, legend and movement.
+### GRAW 1 open issues (real GPU, emulated renderer)
+
+- **Squadmate loses weapon, blue marker and outline** (tutorial, 60 Hz; squad orders still work). Not seen
+  so far at 30 Hz; more testing needed. Same as graw360 #7 and maybe #19, both open there; graw360 also
+  saw #7 once at 30 fps.
+- **Dark polygon in the sky** (helicopter scene): a large straight-edged darker area that moves with the view.
+  Looks like part of the sky clipped away. Untested idea: the missing `force_depth_clamp` setting, which Xenia Canary's
+  tracker marks as required for this game. graw360 #32 is similar. Minor.
+- **Speckle on the helicopter frame** in the same scene; resembles graw360 #5. Cause not known.
+- **Stutter in new areas** with the shader cache on. Whether it is shader building is not confirmed.
 ## GRAW 2 campaign
 
 - Disc (1,811 files) and title update extracted; update blocks hash-checked.
