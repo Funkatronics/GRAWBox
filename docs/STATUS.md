@@ -80,6 +80,8 @@ Updated 2026-11-24.
   left out. Under WARP it now goes from New Campaign to the mission loading screen, no crash in 120 s; the
   mission itself had not loaded by then.
 - Runs on a real GPU with the fix (tester report). **Ghosting** looks the same as in GRAW 1 and is more noticeable.
+  Tester observation: it seems worse where there is more smoke or dust, and pulses in time with the smoke moving
+  across the screen. Unproven.
   Other visual issues seen, details not recorded yet.
 - **Thin black horizontal line** across the screen, roughly 30% of the height from the bottom. Drawn over the
   character and terrain but not over the sky. Cause not known.
