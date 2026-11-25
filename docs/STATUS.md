@@ -153,6 +153,17 @@ See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a
 - All checked on WARP at 2x in GRAW 2 (same view as the report, no stripes); pulsing not judged in motion. GRAW 1 not rerun.
 - A GRAW 2 save makes scripted runs start in the playable part (Load Campaign).
 
+### Fourth real GPU test (tester reports)
+
+- Ambient occlusion and sharpening look great, no issues seen, both games. GRAW 2 performance solid. GRAW 1 looked good in the
+  previous pass, with a few hitches; needs longer and repeated play, not a priority.
+- GRAW 2 haze: better than the original in every way, playable. Left: still too rhythmic, a fast frequency stands out; one
+  tree in the middle distance still doubled a little. `native.haze_tuning=true` makes F8 cycle six variants (slower, and noise
+  without a rhythm) to choose from; the smear is tapered for the doubling.
+- **GRAW 1: wrong shadow by some barrels**: part of a barrel's shadow is drawn in the air as small translucent black
+  triangles. Cause not known. Not compared with the emulated renderer.
+- **GRAW 1: flickering while paused and in the background** (window not focused). Cause not known. Low priority.
+
 ## Next
 
 GRAW 2: details of the visual issues. GRAW 1:

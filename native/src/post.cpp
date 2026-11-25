@@ -14,6 +14,8 @@
 REXCVAR_DECLARE(std::string, graw_native_haze);
 REXCVAR_DECLARE(int32_t, graw_native_ao);
 REXCVAR_DECLARE(double, graw_native_sharpness);
+REXCVAR_DECLARE(int32_t, graw_native_haze_variant);
+REXCVAR_DECLARE(bool, graw_native_haze_tuning);
 REXCVAR_DEFINE_BOOL(graw_native_ao_half, false, "GRAW native",
                     "Ambient occlusion at half resolution even at 1x");
 REXCVAR_DEFINE_BOOL(graw_native_ao_debug, false, "GRAW native", "Show the ambient occlusion alone");
@@ -37,9 +39,10 @@ struct Constants {
   float wave[4];
   float time[2], shift[2];
   float range, ao, sharpness;
-  uint32_t flags;  // 1: the haze, 2: ambient occlusion, 4: it alone
+  uint32_t flags;  // 1: the haze, 2: ambient occlusion, 4: it alone, 8: drifting motion
+  float speed, pulse, strength, marks;
 };
-static_assert(sizeof(Constants) == 20 * 4);
+static_assert(sizeof(Constants) == 24 * 4);
 
 const char kSource[] = R"(
 cbuffer C : register(b0) {
@@ -49,6 +52,7 @@ cbuffer C : register(b0) {
   float2 time, shift;
   float range, ao_strength, sharpness;
   uint flags;
+  float speed, pulse, strength, marks;
 };
 Texture2D<float4> scene : register(t0);
 Texture2D<float> depth : register(t1);
@@ -170,12 +174,38 @@ void main(uint3 id : SV_DispatchThreadID) {
 // The vertex shader of the haze at a point of its grid, 32 by 16 cells: the displacement (as a share
 // of `shift`) and how much more is blurred there. Its frequency across the screen grows with the
 // time, so that between the points it would be noise: it must not be worked out per pixel.
+float Hash(float3 p) {
+  p = frac(p * float3(0.1031, 0.1030, 0.0973));
+  p += dot(p, p.yxz + 33.33);
+  return frac((p.x + p.y) * p.z);
+}
+float Noise(float3 p) {
+  float3 i = floor(p), f = p - i;
+  f = f * f * (3.0 - 2.0 * f);
+  float4 n = float4(lerp(Hash(i), Hash(i + float3(0, 0, 1)), f.z),
+                    lerp(Hash(i + float3(1, 0, 0)), Hash(i + float3(1, 0, 1)), f.z),
+                    lerp(Hash(i + float3(0, 1, 0)), Hash(i + float3(0, 1, 1)), f.z),
+                    lerp(Hash(i + float3(1, 1, 0)), Hash(i + float3(1, 1, 1)), f.z));
+  n.xy = lerp(n.xz, n.yw, f.x);
+  return lerp(n.x, n.y, f.y);
+}
+// The same without a rhythm: noise that drifts and changes.
+float3 Drift(float2 uv) {
+  float t = fmod(time.y * speed, 4096.0);
+  float3 p = float3(uv * float2(11, 6) + t * float2(0.30, 0.06), t * 0.8);
+  float3 q = float3(uv * float2(23, 13) - t * float2(0.21, 0.13), t * 1.3 + 50.0);
+  float2 m = float2(Noise(p) + 0.5 * Noise(q), Noise(p + 91.7) + 0.5 * Noise(q + 37.3)) - 0.75;
+  float blot = Noise(float3(uv * float2(3.5, 2.5) + t * float2(0.12, 0.02), t * 0.22)) * 0.7 +
+               Noise(float3(uv * float2(9, 6) + t * float2(0.2, 0.0), t * 0.4)) * 0.3;
+  return float3(clamp(m * 1.9, -1.0, 1.0), 0.5 * smoothstep(0.42, 0.85, blot));
+}
 float Sin(float x) { return sin(6.2831853 * frac(x * 0.15915494)); }
 float3 Motion(float2 p) {
   float2 uv = p / float2(32, 16);
-  float sv = Sin(wave.w * uv.y + time.y), su = Sin(wave.w * uv.x + time.x);
-  float a = wave.y * uv.y + time.y;
-  return float3(Sin(wave.x * uv.x + time.x - wave.z * (a + uv.x)), Sin(a - wave.z * uv.x * a),
+  float2 now = time * speed;
+  float sv = Sin(wave.w * uv.y + now.y), su = Sin(wave.w * uv.x + now.x);
+  float a = wave.y * uv.y + now.y;
+  return float3(Sin(wave.x * uv.x + now.x - wave.z * (a + uv.x)), Sin(a - wave.z * uv.x * a),
                 saturate(su * sv + su - sv - 0.5));
 }
 float Occlusion(float2 uv, float z) {
@@ -219,22 +249,24 @@ void main(uint3 id : SV_DispatchThreadID) {
       int2 o = int2(j % 3, j / 3) - 1;
       w += Far(uv + inv_out * o) * ((2 - abs(o.x)) * (2 - abs(o.y))) / 16.0;
     }
-    float k = saturate(s.a + w);
+    w *= strength;
+    float k = saturate(s.a * strength + w);
     if (k > 0.002) {
       // The displaced copy's place and the moving patches that are blurred more, from the grid.
       float2 g = uv * float2(32, 16), cell = min(floor(g), float2(31, 15)), t = g - cell;
       float3 m0 = lerp(Motion(cell), Motion(cell + float2(1, 0)), t.x);
       float3 m1 = lerp(Motion(cell + float2(0, 1)), Motion(cell + 1), t.x);
-      float3 motion = lerp(m0, m1, t.y);
+      float3 motion = flags & 8u ? Drift(uv) : lerp(m0, m1, t.y);
+      motion *= float3(1.0, 1.0, pulse);
       float2 move = motion.xy * shift;
       // The games average the picture with its displaced copy, which doubles it: here the average of
-      // all between the two.
+      // all between the two, less of it towards the copy.
       float3 sum = c;
       float total = 1.0;
       [unroll] for (int i = 1; i <= 8; ++i) {
         float2 q = uv + move * (i / 8.0);
         float4 n = scene.SampleLevel(lin, q, 0);
-        float m = Blurs(q, n.a) + 1e-3;
+        float m = (Blurs(q, n.a) + 1e-3) * (1.0 - 0.08 * i);
         sum += n.rgb * m;
         total += m;
       }
@@ -252,11 +284,52 @@ void main(uint3 id : SV_DispatchThreadID) {
     o = lerp(1.0, o, ao_strength * (1.0 - 0.6 * smoothstep(0.45, 1.0, l)));
     c = flags & 4u ? o.xxx : c * o;
   }
+  // The variant just chosen: as many marks.
+  if (marks > 0) {
+    float2 at = uv * float2(64, 36) - float2(2, 2);
+    if (at.y >= 0 && at.y < 1 && at.x >= 0 && at.x < marks * 1.5 && frac(at.x / 1.5) < 0.67)
+      c = float3(1, 1, 1);
+  }
   // No haze left for the pass of the game to add.
   dst[id.xy] = float4(c, flags & 1u ? 0.0 : s.a);
 }
 #endif
 )";
+
+struct HazeVariant {
+  bool drift;
+  float speed, pulse, strength;
+};
+constexpr HazeVariant kVariants[] = {
+    {false, 1.0f, 1.0f, 1.0f},  // the games' motion
+    {false, 0.35f, 1.0f, 1.0f},
+    {true, 1.0f, 1.0f, 1.0f},
+    {true, 0.5f, 1.0f, 1.0f},
+    {true, 0.5f, 0.5f, 1.0f},
+    {true, 0.5f, 0.5f, 0.7f},
+};
+
+// --graw_native_haze_variant; with --graw_native_haze_tuning F8 goes through them.
+const HazeVariant& Variant(float* marks) {
+  constexpr int kCount = int(std::size(kVariants));
+  static int variant = std::clamp(REXCVAR_GET(graw_native_haze_variant), 1, kCount) - 1;
+  static const bool tuning = REXCVAR_GET(graw_native_haze_tuning);
+  static bool was_down = false;
+  static ULONGLONG shown = 0;
+  if (tuning) {
+    DWORD process = 0;
+    GetWindowThreadProcessId(GetForegroundWindow(), &process);
+    const bool down = process == GetCurrentProcessId() && (GetAsyncKeyState(VK_F8) & 0x8000);
+    if (down && !was_down) {
+      variant = (variant + 1) % kCount;
+      shown = GetTickCount64();
+      REXLOG_INFO("GRAW native post: haze variant {}", variant + 1);
+    }
+    was_down = down;
+  }
+  *marks = shown && GetTickCount64() - shown < 2500 ? float(variant + 1) : 0.0f;
+  return kVariants[variant];
+}
 
 struct Target {
   ComPtr<ID3D12Resource> resource;
@@ -475,6 +548,11 @@ bool PostProcess::Run(ID3D12Device* device, ID3D12GraphicsCommandList* list, uin
   c.ao_size[1] = float(m.ao_height);
   c.flags = (DrawsHaze() ? 1u : 0u) | (ao ? 2u : 0u) |
             (ao && REXCVAR_GET(graw_native_ao_debug) ? 4u : 0u);
+  const HazeVariant& variant = Variant(&c.marks);
+  c.speed = variant.speed;
+  c.pulse = variant.pulse;
+  c.strength = variant.strength;
+  if (variant.drift) c.flags |= 8;
   ID3D12DescriptorHeap* heaps[] = {m.heap.Get()};
   list->SetDescriptorHeaps(1, heaps);
   list->SetComputeRootSignature(m.root.Get());

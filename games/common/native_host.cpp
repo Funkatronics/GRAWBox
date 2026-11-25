@@ -104,6 +104,9 @@ const char* Option(const char* name) {
   if (n == "native_haze") return (values[n] = Settings().haze.Get()).c_str();
   if (n == "native_anisotropy")
     return (values[n] = std::to_string(Settings().anisotropy.Get())).c_str();
+  if (n == "native_haze_variant")
+    return (values[n] = std::to_string(Settings().haze_variant.Get())).c_str();
+  if (n == "native_haze_tuning") return Settings().haze_tuning.Get() ? "true" : "false";
   if (n == "native_ao")
     return (values[n] = std::to_string(Settings().ambient_occlusion.Get())).c_str();
   if (n == "native_sharpness")

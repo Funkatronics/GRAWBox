@@ -21,6 +21,10 @@ class NativeSettings : public rex::SettingOwner {
   REX_SETTING(std::string, haze, "fixed",
               "The games' distance haze: fixed (no double image, no bleeding), original or off",
               rex::Allowed("fixed", "original", "off"), rex::kRestart);
+  REX_SETTING(rex::i32, haze_variant, 1, "Motion of the fixed haze, 1 as the games",
+              rex::Range{1, 6}, rex::kRestart);
+  REX_SETTING(bool, haze_tuning, false, "F8 goes through the variants of the fixed haze",
+              rex::kRestart);
   REX_SETTING(rex::i32, ambient_occlusion, 0, "Ambient occlusion, its strength in percent",
               rex::Range{0, 100}, rex::kRestart);
   REX_SETTING(rex::f64, sharpness, 0.0, "Sharpening of the scene", rex::Range{0.0, 1.0},
