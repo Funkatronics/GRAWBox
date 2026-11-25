@@ -81,6 +81,8 @@ Updated 2026-11-24.
   mission itself had not loaded by then.
 - Runs on a real GPU with the fix (tester report). **Ghosting** looks the same as in GRAW 1 and is more noticeable.
   Other visual issues seen, details not recorded yet.
+- **Thin black horizontal line** across the screen, roughly 30% of the height from the bottom. Drawn over the
+  character and terrain but not over the sky. Cause not known.
 - `sub_823A56C0` is about 1 MB of generated code. Cause not checked.
 - Tracked in `games/graw2-campaign/`; `tools/build.ps1 -Game graw2` builds it on the patched SDK.
 
