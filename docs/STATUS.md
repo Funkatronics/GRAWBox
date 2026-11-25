@@ -55,6 +55,16 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
 - GRAW 2's HUD clips with a depth mask that only color clears of the same EDRAM tiles reset (`RenderTargets::FillDepths`).
 - On WARP the emulated renderer shows a black 3D world; native does not.
 
+## Launcher
+
+- `launcher/` (Rust, egui on Direct3D 12 through wgpu; chosen because this VM has no OpenGL 2): Play, Graphics, Controls,
+  Game files. Imports a disc image or title update (recognised by its files; free space checked; the reader is a port of
+  `tools/x360_extract.py` and lists the same files for both discs and updates), or uses a folder already extracted. Before
+  starting a game it checks the SHA-1 of the executables and updates the port is made from. Writes `grawbox-keys.txt` and
+  passes the settings as arguments. Layout: `programs/<game>/` (the port), `games/<game>/{game,user,cache}`, `settings.toml`.
+- On WARP: the window, the tabs and Play (GRAW 2 started at 1440p with the launcher's keys). Not yet: importing through the
+  window, key capture, a real GPU. How players get the programs is not settled.
+
 ## Toolchain and tests
 
 - Portable in the ignored `.tools/`: SDK 0.11.0, LLVM 22.1.8 (22 or newer is required), CMake 3.31.8, Ninja 1.13.1. Also Python
@@ -66,4 +76,4 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
 
 ## Next
 
-Keyboard and mouse changes, then the launcher.
+The tester's flicker and key results; the launcher on a real GPU.
