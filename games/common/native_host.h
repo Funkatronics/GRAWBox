@@ -13,7 +13,7 @@ namespace grawbox {
 class NativeSettings : public rex::SettingOwner {
  public:
   NativeSettings() : rex::SettingOwner("native") {}
-  REX_SETTING(std::string, renderer, "emulated",
+  REX_SETTING(std::string, renderer, "native",
               "Renderer at start, F9 switches. off leaves the native renderer unloaded",
               rex::Allowed("native", "emulated", "off"), rex::kRestart);
   REX_SETTING(rex::i32, resolution_scale, 1, "Resolution scale of the native renderer",
