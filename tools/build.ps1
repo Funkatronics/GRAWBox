@@ -42,7 +42,7 @@ if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 $build = Join-Path $project 'out\build'
 cmake -S $project -B $build -G 'Ninja Multi-Config' "-DCMAKE_CXX_COMPILER=$llvm\clang++.exe" `
-    "-DCMAKE_PREFIX_PATH=$Sdk"
+    "-DCMAKE_PREFIX_PATH=$Sdk" "-Drexglue_DIR=$Sdk\lib\cmake\rexglue"
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 cmake --build $build --config $Config
 exit $LASTEXITCODE

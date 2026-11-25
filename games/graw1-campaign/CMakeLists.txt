@@ -7,7 +7,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(rexglue 0.11.0 REQUIRED CONFIG)
 rexglue_project(graw1_campaign OUTPUT_DIR generated/campaign)
 
-add_executable(graw1_campaign WIN32 src/main.cpp)
+add_executable(graw1_campaign WIN32 src/main.cpp src/native_hooks.cpp
+               ../common/native_host.cpp)
+target_include_directories(graw1_campaign PRIVATE . ../common ../../native/include)
 rexglue_setup_target(graw1_campaign)
 
 option(GRAWBOX_TEST_TOOLS "Build the scripted controller for unattended tests" ON)

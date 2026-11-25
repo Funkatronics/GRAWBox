@@ -1,0 +1,203 @@
+Subject: [PATCH] Let a host renderer draw the title's frames
+
+---
+ src/gpu/xenos/command_processor.cpp          | 10 ++++++-
+ src/gpu/xenos/command_processor.h            |  3 ++
+ src/gpu/xenos/d3d12/command_processor.cpp    |  9 +++++-
+ src/gpu/xenos/host_renderer.h                | 21 ++++++++++++++
+ src/gpu/xenos/xenos_graphics_driver_base.cpp | 30 +++++++++++++++++++-
+ 5 files changed, 70 insertions(+), 3 deletions(-)
+ create mode 100644 src/gpu/xenos/host_renderer.h
+
+diff --git a/src/gpu/xenos/command_processor.cpp b/src/gpu/xenos/command_processor.cpp
+index 5e58c53d..5b7b4fdd 100644
+--- a/src/gpu/xenos/command_processor.cpp
++++ b/src/gpu/xenos/command_processor.cpp
+@@ -24,6 +24,7 @@
+ #include <rex/logging/log_category.h>
+ #include <rex/chrono.h>
+ #include "gpu/xenos/command_processor.h"
++#include "gpu/xenos/host_renderer.h"
+ #include "gpu/xenos/xenos_graphics_driver_base.h"
+ #include "gpu/xenos/physical_memory.h"
+ #include <rex/xenos/texture.h>
+@@ -1312,7 +1313,7 @@ bool CommandProcessor::ExecutePacketType3Draw(memory::RingBuffer* reader,
+ 
+   if (draw_succeeded) {
+     auto viz_query = register_file_->Get<xenos::reg::PA_SC_VIZ_QUERY>();
+-    if (!(viz_query.viz_query_ena && viz_query.kill_pix_post_hi_z)) {
++    if (!(viz_query.viz_query_ena && viz_query.kill_pix_post_hi_z) && !host_renderer_draws) {
+       bool major_mode_explicit =
+           xenos::IsMajorModeExplicit(vgt_draw_initiator.major_mode, vgt_draw_initiator.prim_type);
+       draw_succeeded = IssueDraw(vgt_draw_initiator.prim_type, vgt_draw_initiator.num_indices,
+@@ -1453,6 +1454,9 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD(memory::RingBuffer* reader,
+   u32 start = start_size >> 16;
+   u32 size_dwords = start_size & 0xFFFF;
+   REX_ASSERT(start == 0);
++  if (host_renderer_draws) {
++    return true;
++  }
+ 
+   const u32* shader_ucode =
+       GetPhysicalForRead<u32>(physical_memory_, addr, size_dwords * sizeof(u32));
+@@ -1488,6 +1492,10 @@ bool CommandProcessor::ExecutePacketType3_IM_LOAD_IMMEDIATE(memory::RingBuffer*
+   REX_ASSERT(start == 0);
+   REX_ASSERT(reader->GetReadCount() >= size_dwords * 4);
+   REX_ASSERT(count - 2 >= size_dwords);
++  if (host_renderer_draws) {
++    reader->AdvanceRead(size_dwords * sizeof(u32));
++    return true;
++  }
+   auto shader = LoadShader(shader_type, static_cast<u32>(reader->GetReadPtr()),
+                            reinterpret_cast<u32*>(reader->GetBuffer() + reader->GetReadOffset()),
+                            size_dwords);
+diff --git a/src/gpu/xenos/command_processor.h b/src/gpu/xenos/command_processor.h
+index 49e5819e..1c91d575 100644
+--- a/src/gpu/xenos/command_processor.h
++++ b/src/gpu/xenos/command_processor.h
+@@ -250,10 +250,13 @@ class REX_GPU_XENOS_API CommandProcessor : public rex::NonCopyable {
+   void WriteLoopRangeFromMem(u32 start_index, u32* base, u32 num_registers);
+   void WriteRegisterBlockRangeFromMem(u32 start_index, u32* base, u32 num_registers);
+ 
++ public:
+   const xenos::reg::DC_LUT_30_COLOR* GetGammaRamp256EntryTable() const {
+     return gamma_ramp_256_entry_table_;
+   }
+   const xenos::reg::DC_LUT_PWL_DATA* GetGammaRampPWLRGB() const { return gamma_ramp_pwl_rgb_[0]; }
++
++ protected:
+   virtual void OnGammaRamp256EntryTableValueWritten() {}
+   virtual void OnGammaRampPWLValueWritten() {}
+ 
+diff --git a/src/gpu/xenos/d3d12/command_processor.cpp b/src/gpu/xenos/d3d12/command_processor.cpp
+index 4dd76dd5..93657c1a 100644
+--- a/src/gpu/xenos/d3d12/command_processor.cpp
++++ b/src/gpu/xenos/d3d12/command_processor.cpp
+@@ -21,6 +21,7 @@
+ #include <rex/assert.h>
+ #include <rex/platform/perf.h>
+ #include "gpu/xenos/d3d12/command_processor.h"
++#include "gpu/xenos/host_renderer.h"
+ #include "gpu/xenos/physical_memory.h"
+ #include "gpu/xenos/d3d12/d3d12_xenos_graphics_driver.h"
+ #include "gpu/xenos/d3d12/shader.h"
+@@ -142,7 +143,8 @@ void D3D12CommandProcessor::InitializeShaderStorage(const std::filesystem::path&
+ 
+ bool D3D12CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(memory::RingBuffer* reader,
+                                                                u32 packet, u32 count) {
+-  if (!GetXenosSettings().occlusion_query_enable.Get() || !occlusion_query_resources_available_) {
++  if (!GetXenosSettings().occlusion_query_enable.Get() || !occlusion_query_resources_available_ ||
++      host_renderer_draws) {
+     return CommandProcessor::ExecutePacketType3_EVENT_WRITE_ZPD(reader, packet, count);
+   }
+ 
+@@ -1807,6 +1809,11 @@ void D3D12CommandProcessor::IssueSwap([[maybe_unused]] u32 frontbuffer_ptr, u32
+     REXGPU_ERROR("IssueSwap: BeginSubmission failed");
+     return;
+   }
++  // The frame still ends here, so its resources are released.
++  if (host_renderer_draws) {
++    EndSubmission(true);
++    return;
++  }
+ 
+   D3D12_SHADER_RESOURCE_VIEW_DESC swap_texture_srv_desc;
+   xenos::TextureFormat frontbuffer_format;
+diff --git a/src/gpu/xenos/host_renderer.h b/src/gpu/xenos/host_renderer.h
+new file mode 100644
+index 00000000..dbad6328
+--- /dev/null
++++ b/src/gpu/xenos/host_renderer.h
+@@ -0,0 +1,21 @@
++/**
++ * @file        gpu/xenos/host_renderer.h
++ * @brief       Lets a host renderer draw the title's frames instead of the Xenos drivers
++ *
++ * @license     BSD 3-Clause License
++ *              See LICENSE file in the project root for full license text.
++ */
++
++#pragma once
++
++#include <atomic>
++
++namespace rex::gpu {
++
++/** True while a host renderer draws: packets still run, without draws, shader loads and presents. */
++inline std::atomic<bool> host_renderer_draws = false;
++
++/** True while a host renderer presents: the drivers leave the window alone. */
++inline std::atomic<bool> host_renderer_presents = false;
++
++}  // namespace rex::gpu
+diff --git a/src/gpu/xenos/xenos_graphics_driver_base.cpp b/src/gpu/xenos/xenos_graphics_driver_base.cpp
+index 6fe403e1..a657b180 100644
+--- a/src/gpu/xenos/xenos_graphics_driver_base.cpp
++++ b/src/gpu/xenos/xenos_graphics_driver_base.cpp
+@@ -10,6 +10,7 @@
+  */
+ 
+ #include "gpu/xenos/xenos_graphics_driver_base.h"
++#include "gpu/xenos/host_renderer.h"
+ 
+ #include <algorithm>
+ #include <cctype>
+@@ -49,8 +50,33 @@ rex::gpu::CommandProcessor::SwapPostEffect ParseSwapPostEffect(const std::string
+   }
+   return rex::gpu::CommandProcessor::SwapPostEffect::kNone;
+ }
++std::atomic<rex::gpu::CommandProcessor*> host_renderer_source = nullptr;
++
+ }  // namespace
+ 
++#if REX_PLATFORM_WIN32
++#define REX_HOST_RENDERER_EXPORT extern "C" __declspec(dllexport)
++#else
++#define REX_HOST_RENDERER_EXPORT extern "C" __attribute__((visibility("default")))
++#endif
++
++REX_HOST_RENDERER_EXPORT void rexgpu_host_renderer_draws(bool draws) {
++  rex::gpu::host_renderer_draws = draws;
++}
++
++REX_HOST_RENDERER_EXPORT void rexgpu_host_renderer_presents(bool presents) {
++  rex::gpu::host_renderer_presents = presents;
++}
++
++REX_HOST_RENDERER_EXPORT const void* rexgpu_gamma_ramp(bool pwl) {
++  const rex::gpu::CommandProcessor* source = host_renderer_source;
++  if (!source) {
++    return nullptr;
++  }
++  return pwl ? static_cast<const void*>(source->GetGammaRampPWLRGB())
++             : static_cast<const void*>(source->GetGammaRamp256EntryTable());
++}
++
+ namespace rex::gpu {
+ 
+ XenosGraphicsDriverBase::XenosGraphicsDriverBase() : vsync_worker_running_(false) {}
+@@ -98,7 +124,7 @@ void XenosGraphicsDriverBase::ResizeSurface(u32 width, u32 height) {
+ }
+ 
+ bool XenosGraphicsDriverBase::BeginPresent() {
+-  return presentation_ && presentation_->ConnectToWindow();
++  return !host_renderer_presents && presentation_ && presentation_->ConnectToWindow();
+ }
+ 
+ void XenosGraphicsDriverBase::RenderOverlays(ImDrawData& draw_data) {
+@@ -147,6 +173,7 @@ Result<void> XenosGraphicsDriverBase::AttachTitle(const TitleInfo& info, IPhysic
+   }
+ 
+   command_processor_ = CreateCommandProcessor();
++  host_renderer_source = command_processor_.get();
+   if (!command_processor_->Initialize()) {
+     REXGPU_ERROR("Unable to initialize command processor");
+     return Err(ErrorCategory::kRuntime, "Unable to initialize command processor");
+@@ -198,6 +225,7 @@ void XenosGraphicsDriverBase::DetachTitle() {
+ 
+   if (command_processor_) {
+     command_processor_->Shutdown();
++    host_renderer_source = nullptr;
+     command_processor_.reset();
+   }
+   shader_storage_opened_ = false;
