@@ -88,7 +88,8 @@ Updated 2026-11-24.
 - **Thin horizontal line** across the screen, roughly 30% of the height from the bottom, over the character and terrain
   but not the sky. Not black: the tester describes a row of pixels where shadows seem not to be drawn, with its
   color following what is behind it. In one capture it sits at row 512 of 720, which would be a boundary between
-  256-row tiles. Tile seam suspected, not proven. Seen at 3x; 1x not checked.
+  256-row tiles. Seen at 3x, gone at 1x, so it comes with resolution scaling;
+  a tile seam is the likely cause. 2x not checked.
 - `sub_823A56C0` is about 1 MB of generated code. Cause not checked.
 - Tracked in `games/graw2-campaign/`; `tools/build.ps1 -Game graw2` builds it on the patched SDK.
 
