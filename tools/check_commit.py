@@ -18,7 +18,7 @@ MAX_BYTES = 512 * 1024
 ALLOWED_SUFFIXES = {
     ".md", ".txt", ".py", ".ps1", ".sh", ".bat", ".toml", ".json", ".cmake", ".yml", ".yaml",
     ".cpp", ".cc", ".c", ".h", ".hpp", ".inl", ".java", ".kt", ".kts", ".gradle", ".xml",
-    ".hlsl", ".glsl", ".rc", ".in", ".diff", ".patch", ".svg", ".properties",
+    ".hlsl", ".glsl", ".rc", ".in", ".diff", ".patch", ".svg", ".properties", ".rs", ".lock",
 }
 ALLOWED_NAMES = {"LICENSE", "NOTICE", ".gitignore", ".gitattributes", "CMakeLists.txt"}
 BLOCKED_PARTS = {"private", "generated", "assets", "game", "out", "build", ".tools", "captures",
