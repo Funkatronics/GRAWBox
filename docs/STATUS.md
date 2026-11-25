@@ -122,8 +122,14 @@ See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a
 ### First real GPU test of the native renderer (tester reports)
 
 - F9 works in both games. Cross-Com works in both. The GRAW 2 horizontal line is gone. GRAW 1 looks good.
-- **GRAW 2: no shadows** from trees, walls or buildings on native.
-- **Textures less sharp** than emulated, mostly at angles and distance, both games.
+- **GRAW 2: no shadows** from trees, walls or buildings on native. Cause: its variance shadow map resolves `k_16_16` with
+  exponent bias -5 to unsigned texels; the resolve stored signed bits without the format's factor of 32. Fixed in
+  `resolve.cpp`; shadows now draw on WARP. **Not finished**: straight vertical shadow edges cross road and walls in the
+  tutorial (x about 180 and 715 of 1280). Cause not known. A resolve dump (`GRAWBOX_NATIVE_RESOLVE_DUMP`) showed cascades 0
+  and 1 nearly empty, but in an intro frame, so it must be repeated at the player's position.
+- **Textures less sharp** than emulated, mostly at angles and distance, both games. `native.anisotropy` now defaults to 16
+  (was 1); not compared yet. Wanted: filtering levels as a player setting.
+- **Wanted**: other visual options, such as ambient occlusion (COGBox has it). Not looked into yet.
 - **GRAW 1 stutters a lot**, seemingly on both renderers. Needs longer play.
 - **Haze**: with `native.haze=false` the ghosting is gone but the world looks too flat and clean. Wanted: the haze fixed, or
   an alternative, rather than removed. Longer term is acceptable.

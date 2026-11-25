@@ -230,6 +230,8 @@ float3 Quantize7e3(float3 c) {
 float4 EdramSample(float4 c) {
   if (src_format == 3u || src_format == 12u)
     return float4(Quantize7e3(c.rgb), (float)U(c.a, 3.0) * (1.0 / 3.0));
+  // k_16_16 and k_16_16_16_16 hold -32...32, their host targets -1...1.
+  if (src_format == 4u || src_format == 5u) return c * 32.0;
   return c;
 }
 
@@ -271,8 +273,9 @@ uint4 PackDest(float4 c) {
       return uint4(U(c.r, 255.0) | (U(c.g, 255.0) << 8) | (U(c.b, 255.0) << 16) | (U(c.a, 255.0) << 24), 0, 0, 0);
     case 7u:                                                                         // k_2_10_10_10
       return uint4(U(c.r, 1023.0) | (U(c.g, 1023.0) << 10) | (U(c.b, 1023.0) << 20) | (U(c.a, 3.0) << 30), 0, 0, 0);
-    // k_16_16: the EDRAM's bits. The host target holds its -32...32 as -1...1, like the texel.
-    case 25u: return uint4(S16(c.r) | (S16(c.g) << 16), 0, 0, 0);
+    case 25u:                                                                        // k_16_16
+      if (number == 1u) return uint4(S16(c.r) | (S16(c.g) << 16), 0, 0, 0);
+      return uint4(U(c.r, 65535.0) | (U(c.g, 65535.0) << 16), 0, 0, 0);
     case 30u: return uint4(f32tof16(c.r), 0, 0, 0);
     case 31u: return uint4(f32tof16(c.r) | (f32tof16(c.g) << 16), 0, 0, 0);
     case 32u: return uint4(f32tof16(c.r) | (f32tof16(c.g) << 16), f32tof16(c.b) | (f32tof16(c.a) << 16), 0, 0);
