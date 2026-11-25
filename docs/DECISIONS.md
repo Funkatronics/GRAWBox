@@ -19,3 +19,5 @@
 - **2026-11-24, repository:** public, named GRAWBox, all of `docs/` published. Short one-line commit messages. Local
   commits at milestones; pushes need the owner's approval. `tools/check_commit.py` runs on each commit.
 - **2026-11-24, launcher language:** the owner prefers Rust. To be settled when the Windows launcher starts.
+- **2026-11-24, issues:** bugs go in GitHub issues. Screenshots showing only the game, with no desktop, are allowed
+  there. No images in the repository itself.
