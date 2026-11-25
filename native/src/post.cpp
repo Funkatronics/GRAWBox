@@ -14,6 +14,8 @@
 REXCVAR_DECLARE(std::string, graw_native_haze);
 REXCVAR_DECLARE(int32_t, graw_native_ao);
 REXCVAR_DECLARE(double, graw_native_sharpness);
+REXCVAR_DEFINE_BOOL(graw_native_ao_half, false, "GRAW native",
+                    "Ambient occlusion at half resolution even at 1x");
 REXCVAR_DEFINE_BOOL(graw_native_ao_debug, false, "GRAW native", "Show the ambient occlusion alone");
 
 namespace graw::native {
@@ -62,14 +64,21 @@ SamplerState pnt : register(s1);
 
 // The depth is the near plane of both games' projections over the distance in meters.
 float Dist(float d) { return 0.1 / max(d, 1e-7); }
-float DistAt(float2 uv) { return Dist(depth.SampleLevel(pnt, uv, 0)); }
-// The games' haze weight by depth.
-float Far(float2 uv) {
-  return saturate(1.0 / (depth.SampleLevel(pnt, uv, 0) + 1e-7) / range);
+// The pixel of `uv`. Half resolution texels have their centers on pixel borders: the quarter keeps
+// the choice from depending on rounding.
+int2 Pixel(float2 uv) {
+  uint2 size;
+  depth.GetDimensions(size.x, size.y);
+  return clamp(int2(floor(uv * size + 0.25)), 0, int2(size) - 1);
 }
+float DistAt(float2 uv) { return Dist(depth.Load(int3(Pixel(uv), 0))); }
+// The games' haze weight by depth.
+float Far(float2 uv) { return saturate(1.0 / (depth.Load(int3(Pixel(uv), 0)) + 1e-7) / range); }
+// How much what is there may blur into what is hazy: nothing near, all from a few meters on alike.
+float Blurs(float2 uv, float a) { return saturate((Far(uv) + a) / 0.12); }
 
 #if defined(FAR_DOWN)
-// Where the haze is, averaged with its weight, so nothing near bleeds into what is far.
+// Averaged without what is near, so it does not bleed into what is far.
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
   float4 sum = 0;
@@ -77,8 +86,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     for (int x = -1; x <= 1; ++x) {
       float2 uv = (id.xy + 0.5 + float2(x, y) / 3.0) * inv_out;
       float4 s = scene.SampleLevel(lin, uv, 0);
-      float w = saturate(Far(uv) + s.a) + 1e-3;
-      w *= w;
+      float w = Blurs(uv, s.a) + 1e-3;
       sum += float4(s.rgb * w, w);
     }
   dst[id.xy] = sum / 9.0;
@@ -89,7 +97,7 @@ void main(uint3 id : SV_DispatchThreadID) {
   float4 sum = 0;
   float total = 0;
   for (int i = -7; i <= 7; ++i) {
-    float g = exp(-0.5 * i * i / (2.5 * 2.5));
+    float g = exp(-0.5 * i * i / (1.75 * 1.75));
     sum += blurred.SampleLevel(lin, (id.xy + 0.5 + axis * i) * inv_out, 0) * g;
     total += g;
   }
@@ -98,8 +106,12 @@ void main(uint3 id : SV_DispatchThreadID) {
 #elif defined(AO)
 static const float2 kTan = float2(0.7516, 0.4228);  // of half the usual field of view
 float3 Pos(float2 uv) {
-  float z = DistAt(uv);
-  return float3((uv * 2.0 - 1.0) * kTan * z, z);
+  uint2 size;
+  depth.GetDimensions(size.x, size.y);
+  int2 px = Pixel(uv);
+  float z = Dist(depth.Load(int3(px, 0)));
+  // Of the pixel the depth is from, so that what is flat stays flat.
+  return float3(((px + 0.5) / size * 2.0 - 1.0) * kTan * z, z);
 }
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
@@ -145,9 +157,9 @@ void main(uint3 id : SV_DispatchThreadID) {
   float2 uv = (id.xy + 0.5) * inv_out;
   float z = DistAt(uv);
   float sum = 0, total = 0;
-  for (int i = -3; i <= 3; ++i) {
+  for (int i = -4; i <= 4; ++i) {
     float2 q = uv + axis * i * inv_out;
-    float w = exp(-0.12 * i * i) * saturate(1.0 - abs(DistAt(q) - z) / (0.02 * z + 0.05));
+    float w = exp(-0.08 * i * i) * saturate(1.0 - abs(DistAt(q) - z) / (0.02 * z + 0.05));
     if (i == 0) w = 1;
     sum += ao.SampleLevel(pnt, q, 0) * w;
     total += w;
@@ -155,6 +167,17 @@ void main(uint3 id : SV_DispatchThreadID) {
   dst[id.xy] = sum / total;
 }
 #else
+// The vertex shader of the haze at a point of its grid, 32 by 16 cells: the displacement (as a share
+// of `shift`) and how much more is blurred there. Its frequency across the screen grows with the
+// time, so that between the points it would be noise: it must not be worked out per pixel.
+float Sin(float x) { return sin(6.2831853 * frac(x * 0.15915494)); }
+float3 Motion(float2 p) {
+  float2 uv = p / float2(32, 16);
+  float sv = Sin(wave.w * uv.y + time.y), su = Sin(wave.w * uv.x + time.x);
+  float a = wave.y * uv.y + time.y;
+  return float3(Sin(wave.x * uv.x + time.x - wave.z * (a + uv.x)), Sin(a - wave.z * uv.x * a),
+                saturate(su * sv + su - sv - 0.5));
+}
 float Occlusion(float2 uv, float z) {
   // The four nearest, by how near in depth.
   float2 t = uv * ao_size - 0.5, b = floor(t), f = t - b;
@@ -176,44 +199,51 @@ void main(uint3 id : SV_DispatchThreadID) {
   float4 s = scene.SampleLevel(pnt, uv, 0);
   float3 c = s.rgb;
   float z = DistAt(uv);
-  if (sharpness > 0) {
+  // The haze is a blur: none where it is full.
+  float sharpen = sharpness * (1.0 - saturate(s.a + Far(uv)));
+  if (sharpen > 0) {
     // Less where the neighbors already differ, as contrast adaptive sharpening does.
     float3 n = scene.SampleLevel(pnt, uv - float2(0, inv_out.y), 0).rgb;
     float3 e = scene.SampleLevel(pnt, uv + float2(inv_out.x, 0), 0).rgb;
     float3 o = scene.SampleLevel(pnt, uv + float2(0, inv_out.y), 0).rgb;
     float3 w = scene.SampleLevel(pnt, uv - float2(inv_out.x, 0), 0).rgb;
     float3 lo = min(c, min(min(n, e), min(o, w))), hi = max(c, max(max(n, e), max(o, w)));
-    float3 amount = sqrt(saturate(min(lo, 1.0 - hi) / max(hi, 1e-4))) * -0.2 * sharpness;
+    float3 amount = sqrt(saturate(min(lo, 1.0 - hi) / max(hi, 1e-4))) * -0.2 * sharpen;
     c = saturate((c + (n + e + o + w) * amount) / (1.0 + 4.0 * amount));
   }
   if (flags & 1u) {
-    float w = Far(uv);
+    // The depth is not antialiased as the picture is: the weight is averaged over the neighbors.
+    // Foliage's is dithered too.
+    float w = 0;
+    [unroll] for (int j = 0; j < 9; ++j) {
+      int2 o = int2(j % 3, j / 3) - 1;
+      w += Far(uv + inv_out * o) * ((2 - abs(o.x)) * (2 - abs(o.y))) / 16.0;
+    }
     float k = saturate(s.a + w);
     if (k > 0.002) {
-      // The moving displacement, which the games work out per vertex.
-      float sv = sin(wave.w * uv.y + time.y), su = sin(wave.w * uv.x + time.x);
-      float a = wave.y * uv.y + time.y;
-      float b = wave.x * uv.x + time.x - wave.z * (a + uv.x);
-      float g = a - wave.z * uv.x * a;
-      float blot = saturate(su * sv + su - sv - 0.5);
-      float2 move = float2(sin(b), sin(g)) * shift * (0.5 * k * (1.0 + blot));
-      // The games average the picture with its displaced copy, which doubles it: here it moves
-      // half as far, softened as wide.
-      float2 r = shift * (0.35 * k);
-      float3 sum = 0;
-      float total = 0;
-      [unroll] for (int i = 0; i < 4; ++i) {
-        float2 q = uv + move + r * float2(i & 1 ? 1 : -1, i & 2 ? 1 : -1);
-        float4 t = scene.SampleLevel(lin, q, 0);
-        float m = saturate((saturate(Far(q) + t.a) / k - 0.5) * 2.5);
-        sum += t.rgb * m;
+      // The displaced copy's place and the moving patches that are blurred more, from the grid.
+      float2 g = uv * float2(32, 16), cell = min(floor(g), float2(31, 15)), t = g - cell;
+      float3 m0 = lerp(Motion(cell), Motion(cell + float2(1, 0)), t.x);
+      float3 m1 = lerp(Motion(cell + float2(0, 1)), Motion(cell + 1), t.x);
+      float3 motion = lerp(m0, m1, t.y);
+      float2 move = motion.xy * shift;
+      // The games average the picture with its displaced copy, which doubles it: here the average of
+      // all between the two.
+      float3 sum = c;
+      float total = 1.0;
+      [unroll] for (int i = 1; i <= 8; ++i) {
+        float2 q = uv + move * (i / 8.0);
+        float4 n = scene.SampleLevel(lin, q, 0);
+        float m = Blurs(q, n.a) + 1e-3;
+        sum += n.rgb * m;
         total += m;
       }
-      // Without a neighbor as far, the pixel itself.
-      c = lerp(c, sum / max(total, 1e-4), saturate(total) * smoothstep(0.0, 0.35, k));
-      float4 f = blurred.SampleLevel(lin, uv + move, 0);
-      float share = 0.5 * w + k * blot * (1.0 - 0.5 * w);
-      c = lerp(c, f.rgb / max(f.a, 1e-6), share * saturate(f.a / (0.05 * k * k + 1e-6)));
+      float4 f = blurred.SampleLevel(lin, uv, 0), f1 = blurred.SampleLevel(lin, uv + move, 0);
+      float3 far = lerp(c, f.rgb / max(f.a, 1e-5), saturate(f.a * 10.0));
+      float3 far1 = lerp(c, f1.rgb / max(f1.a, 1e-5), saturate(f1.a * 10.0));
+      float3 a = lerp(c, far, 0.5 * w);
+      float3 b = lerp(sum / total, lerp(far, far1, 0.5), 0.5 * w);
+      c = lerp(a, lerp(b, far1, motion.z), k);
     }
   }
   if (flags & 2u) {
@@ -411,7 +441,7 @@ bool PostProcess::Run(ID3D12Device* device, ID3D12GraphicsCommandList* list, uin
   const uint32_t w = uint32_t(sd.Width), h = sd.Height;
   if (w != m.width || h != m.height) {
     if (m.width) return false;  // the scene is one size for the whole run
-    const bool half = h > 1080;
+    const bool half = h > 1080 || REXCVAR_GET(graw_native_ao_half);
     m.width = w;
     m.height = h;
     m.ao_width = half ? w / 2 : w;

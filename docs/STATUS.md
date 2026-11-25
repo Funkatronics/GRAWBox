@@ -142,6 +142,17 @@ See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a
   haze without the double image, no halo around the player. Not yet seen on a real GPU.
 - **Ambient occlusion** (`native.ambient_occlusion`, off by default) works on WARP in GRAW 2. Cost on a real GPU not measured.
 
+### Third real GPU test, both games (tester reports)
+
+- GRAW 2: locked 60 fps, flat frame times; shadows match emulated.
+- First `fixed` haze: no doubling and good nearby, but jagged and wavy edges at a distance, a clock-like pulse, and white edges
+  against a bright sky. Cause of the waves and pulse: the games work the displacement out on a 32x16 grid, with a frequency
+  that grows with mission time, so it is noise there; it was done per pixel. Redone on the grid, as a smear instead of a second
+  copy. Edges: the haze weight is now filtered over neighbors, and the sky no longer weighs more than what is in front.
+- Ambient occlusion liked, but vertical stripes on walls (half resolution samples fell on pixel borders). Fixed.
+- All checked on WARP at 2x in GRAW 2 (same view as the report, no stripes); pulsing not judged in motion. GRAW 1 not rerun.
+- A GRAW 2 save makes scripted runs start in the playable part (Load Campaign).
+
 ## Next
 
 GRAW 2: details of the visual issues. GRAW 1:
