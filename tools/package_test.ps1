@@ -24,7 +24,7 @@ if ($Runtime) {
     Get-ChildItem $Runtime -File | Where-Object { $_.Name -match '^(msvcp|vcruntime|concrt|vccorlib)' } |
         Copy-Item -Destination $bin
 }
-Copy-Item (Join-Path $root 'input\grawbox-keys.txt') $bin
+Copy-Item (Join-Path $root 'input\grawbox-keys*.txt') $bin
 foreach ($needed in "${Game}_campaign.exe", 'grawbox_native.dll', 'rexgpu-xenos-d3d12.dll') {
     if (-not (Test-Path (Join-Path $bin $needed))) { throw "$needed is missing from $release" }
 }

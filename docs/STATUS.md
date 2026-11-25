@@ -22,8 +22,8 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
 - **GRAW 1 world went mostly black** once, late in the first mission, on the emulated renderer. Cause not known.
 - **GRAW 1: dark polygon in the sky** (helicopter scene), on the emulated renderer. Not checked on native.
 - GRAW 1 hitches: need longer and repeated play.
-- Keyboard and mouse: the pointer shows in the middle of the screen, the mouse does nothing in menus, GRAW 1's key caps are
-  blurry at 4K, and the default keys need changes.
+- Keyboard and mouse: new default keys (`grawbox-keys-classic.txt` is the first scheme), hidden pointer, wheel as keys; the
+  new keys are not judged yet. The mouse does nothing in menus. Grenades have no key of their own (B's inventory).
 - GRAW 1 prompts still showing the pad: X, Y, triggers, BACK, in-text icons.
 - Native renderer: no occlusion queries (a fixed count is reported); Vulkan not brought over; system dialogs not tested.
 - Not tested: drone and squad feeds beyond the first mission, loading GRAW 1 saves, later missions, returning to the front end.
@@ -40,6 +40,9 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
 - `patches/rexglue-0.11.0-freed-page-resolve.patch` (graw360 issue #1) fixed GRAW 1's HUD noise.
 - A driver module must call `rexglue_link_host_allocator`, or the program dies with heap corruption.
 - Translate before CMake configures, or the sources are left out. A build caches the SDK's path: `tools/build.ps1` sets it.
+- Buttons, GRAW 2 from its control screen: LT aim, RT fire, LB engagement mode, RB camera side and command view, BACK map,
+  left stick press stance, right stick press scope, d-pad left/right speaker, up/down orders, A reload and fire mode, B weapons,
+  X vision, Y action. GRAW 1: A, B (a tap swaps weapons) and Y the same by a review; the rest not checked.
 - The haze pass mixes the picture, by 1 / depth / 1000, with a blurred 256x200 copy and a displaced copy. The displacement is
   worked out on a 32x16 grid with a frequency that grows with time, so that it is noise there.
 - GRAW 2's shadow atlas is 1024x1024 `k_16_16` with three mip levels, each a resolve with exponent bias -5. Its shaders' c104 and

@@ -49,6 +49,11 @@ class Mouse {
     if (const DWORD id = id_) PostThreadMessageW(id, WM_QUIT, 0, 0);
     thread_.join();
   }
+  // Whether the wheel turned that way in the last moment.
+  bool Wheel(bool up) const {
+    const ULONGLONG at = up ? wheel_up_ : wheel_down_;
+    return at && GetTickCount64() - at < 90;
+  }
   void Take(long& dx, long& dy) {
     dx = dx_.exchange(0);
     dy = dy_.exchange(0);
@@ -66,6 +71,9 @@ class Mouse {
         if (self) {
           self->dx_ += raw.data.mouse.lLastX;
           self->dy_ += raw.data.mouse.lLastY;
+          if (raw.data.mouse.usButtonFlags & RI_MOUSE_WHEEL)
+            (SHORT(raw.data.mouse.usButtonData) > 0 ? self->wheel_up_ : self->wheel_down_) =
+                GetTickCount64();
         }
       }
     }
@@ -89,6 +97,7 @@ class Mouse {
     DestroyWindow(w);
   }
   std::atomic<long> dx_ = 0, dy_ = 0;
+  std::atomic<ULONGLONG> wheel_up_ = 0, wheel_down_ = 0;
   std::atomic<DWORD> id_ = 0;
   std::thread thread_;
 };
@@ -175,7 +184,11 @@ class Driver final : public IInputDriver {
 
   bool Down(size_t control) const {
     return std::any_of(keys_[control].begin(), keys_[control].end(),
-                       [](int key) { return (GetAsyncKeyState(key) & 0x8000) != 0; });
+                       [this](int key) {
+                         if (key == kWheelUp || key == kWheelDown)
+                           return mouse_ && mouse_->Wheel(key == kWheelUp);
+                         return (GetAsyncKeyState(key) & 0x8000) != 0;
+                       });
   }
 
   // Counts per second to deflection: past the games' dead zone at once, full at 1500 counts per
@@ -186,12 +199,31 @@ class Driver final : public IInputDriver {
     return std::copysign(settings_.mouse_deadzone + (1 - settings_.mouse_deadzone) * std::min(a, 1.0), rate);
   }
 
-  // Keeps the cursor inside the game's window while it has the focus.
+  // The game's window without a pointer while it has the focus.
+  static LRESULT CALLBACK HidePointer(HWND w, UINT m, WPARAM wp, LPARAM lp) {
+    if (m == WM_SETCURSOR && LOWORD(lp) == HTCLIENT && hidden_) {
+      SetCursor(nullptr);
+      return TRUE;
+    }
+    // Alt alone would open the window's menu and take the keys from the game.
+    if (m == WM_SYSCOMMAND && (wp & 0xFFF0) == SC_KEYMENU && !lp) return 0;
+    return CallWindowProcW(previous_, w, m, wp, lp);
+  }
+
+  // Keeps the pointer inside the game's window while it has the focus, in its corner, where
+  // nothing of it shows.
   void Lock(HWND window) {
+    hidden_ = window != nullptr;
+    if (window && !previous_ && !(GetWindowLongW(window, GWL_STYLE) & WS_CHILD) &&
+        IsWindowVisible(window)) {
+      previous_ = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC));
+      SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&HidePointer));
+      PostMessageW(window, WM_SETCURSOR, WPARAM(window), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    }
     if (window) {
       RECT r;
       if (!GetClientRect(window, &r)) return;
-      POINT a = {r.right / 2, r.bottom / 2};
+      POINT a = {r.right - 1, r.bottom - 1};
       ClientToScreen(window, &a);
       const RECT clip = {a.x, a.y, a.x + 1, a.y + 1};
       ClipCursor(&clip);
@@ -209,6 +241,8 @@ class Driver final : public IInputDriver {
   double rate_x_ = 0, rate_y_ = 0;
   Settings settings_;
   bool locked_ = false;
+  static inline std::atomic<bool> hidden_ = false;
+  static inline WNDPROC previous_ = nullptr;
 };
 
 std::unique_ptr<IDriver> CreateDriver() { return std::make_unique<Driver>(); }

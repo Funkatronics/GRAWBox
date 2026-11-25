@@ -73,6 +73,9 @@ struct TextureCache::Texture {
   // resolves they hold (CopyResolvedScaled).
   ComPtr<ID3D12Resource> scaled;
   std::vector<uint64_t> scaled_seq;
+  // Bound in place of `resource` while `prompts`: the texture with key caps (prompts.h).
+  ComPtr<ID3D12Resource> large;
+  bool prompts = false;
   uint32_t uploads = 0;  // Upload calls so far (the slow-upload log)
   uint32_t slot = 0;
   uint64_t placed = kCommitted, bytes = 0;  // CreateTextureResource's placement and size
@@ -537,6 +540,7 @@ void TextureCache::EvictOverBudget(uint64_t completed_fence) {
       break;
     evict_batch_.push_back(t);
     evict_resources_.push_back(t->resource.Get());
+    if (t->large) evict_resources_.push_back(t->large.Get());
     if (t->scaled) evict_resources_.push_back(t->scaled.Get());
     bytes -= t->bytes;
   }
@@ -765,6 +769,56 @@ bool TextureCache::Upload(Texture& t, ID3D12GraphicsCommandList* list, uint64_t 
   ++stats_.uploads;
   stats_.upload_bytes += size;
   return true;
+}
+
+void TextureCache::UpdatePrompts(Texture& t, ID3D12GraphicsCommandList* list,
+                                 uint64_t frame_fence) {
+  const TextureKey& key = t.key;
+  GuestTextureMemory memory = {};
+  memory.base = membase_ + (key.base_page << 12);
+  memory.base_size = t.base_bytes;
+  std::vector<uint8_t> rgba;
+  bool on = BuildPrompts(key, memory,
+                         std::min<size_t>(t.base_bytes, t.layout.base.level_data_extent_bytes), &rgba);
+  if (on && !t.large) {
+    const uint32_t w = key.width * kPromptScale, h = key.height * kPromptScale;
+    const uint32_t pitch = (w * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) &
+                           ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
+    D3D12_HEAP_PROPERTIES hp = {D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC d = {};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width = w;
+    d.Height = h;
+    d.DepthOrArraySize = 1;
+    d.MipLevels = 1;
+    d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    d.SampleDesc.Count = 1;
+    UploadPool::Alloc a;
+    if (upload_.Allocate(uint64_t(pitch) * h, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT, frame_fence,
+                         &a) &&
+        SUCCEEDED(device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d,
+                                                   D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                   IID_PPV_ARGS(t.large.GetAddressOf())))) {
+      for (uint32_t y = 0; y < h; ++y)
+        std::memcpy(a.cpu + size_t(y) * pitch, rgba.data() + size_t(y) * w * 4, size_t(w) * 4);
+      D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
+      dst.pResource = t.large.Get();
+      dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+      src.pResource = a.resource;
+      src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+      src.PlacedFootprint.Offset = a.offset;
+      src.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM, w, h, 1, pitch};
+      list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+      const D3D12_RESOURCE_BARRIER b =
+          TransitionBarrier(t.large.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kShaderRead);
+      list->ResourceBarrier(1, &b);
+    }
+    on = bool(t.large);
+  }
+  if (on == t.prompts) return;
+  t.prompts = on;
+  ++slots_[t.slot].generation;
+  change_epoch_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 ID3D12Resource* TextureCache::ResolvedSource(const Texture& t, const ResolvedImage& image) const {
@@ -1017,6 +1071,7 @@ bool TextureCache::Get(const uint32_t fetch_dwords[6], ID3D12GraphicsCommandList
     const bool uploaded = Upload(*t, list, frame_fence, first_use);
     stats_.upload_ns += NowNs() - u0;
     if (!uploaded) return false;
+    if (PromptSize(key)) UpdatePrompts(*t, list, frame_fence);
   }
 #ifndef GRAW_TEXTURES_OFFLINE
   const uint64_t seq_before = t->resolved_seq.empty() ? 0 : t->resolved_seq[0];
@@ -1048,7 +1103,8 @@ bool TextureCache::Get(const uint32_t fetch_dwords[6], ID3D12GraphicsCommandList
 
   xenos::xe_gpu_texture_fetch_t fetch;
   std::memcpy(&fetch, fetch_dwords, sizeof(fetch));
-  out->resource = t->alias ? t->alias : t->resource.Get();
+  const bool prompts = t->prompts && !t->alias;
+  out->resource = t->alias ? t->alias : prompts ? t->large.Get() : t->resource.Get();
   out->key = key;
   out->entry = {t->slot, slots_[t->slot].generation};
   out->aliased = t->alias != nullptr;
@@ -1058,7 +1114,7 @@ bool TextureCache::Get(const uint32_t fetch_dwords[6], ID3D12GraphicsCommandList
   out->swizzled_signs = texture_util::SwizzleSigns(fetch);
   D3D12_SHADER_RESOURCE_VIEW_DESC& srv = out->srv;
   srv = {};
-  srv.Format = t->host->unorm;
+  srv.Format = prompts ? DXGI_FORMAT_R8G8B8A8_UNORM : t->host->unorm;
   srv.Shader4ComponentMapping = GuestToHostComponentMapping(fetch.swizzle, t->host->host_swizzle);
   switch (key.dimension) {
     case xenos::DataDimension::k3D:

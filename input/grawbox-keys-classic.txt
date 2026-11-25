@@ -1,0 +1,24 @@
+# The first scheme, the same keys in both games. To use it, copy this file over grawbox-keys.txt.
+mouse_sensitivity = 1.0
+mouse_deadzone = 0.24
+mouse_invert = 0
+move_forward = W
+move_back = S
+move_left = A
+move_right = D
+right_trigger = MOUSE1
+left_trigger = MOUSE2
+right_stick_press = MOUSE3 Z
+left_stick_press = LSHIFT
+left_bumper = Q
+right_bumper = F
+a = SPACE ENTER
+b = C BACKSPACE
+x = R
+y = E
+dpad_up = UP 1
+dpad_down = DOWN 2
+dpad_left = LEFT 3
+dpad_right = RIGHT 4
+start = ESC
+back = TAB M
