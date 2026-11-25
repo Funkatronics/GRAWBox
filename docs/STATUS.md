@@ -110,6 +110,13 @@ See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a
 - **F9** switches both ways in the GRAW 1 menu on WARP.
 - **Cross-Com may be broken on it in GRAW 1** (tester report, watching a WARP run). Not settled: at seconds per frame the
   emulated renderer's panel is empty too, the clip running in real time, and one native run did draw a 160x120 video image.
+- GRAW 1's mission also draws at 2x; about 17 minutes of scripted play (cover, shooting, decals, HUD) without an error.
+  Resize, minimize, restore and close work in both games.
+- **Keyboard and mouse**: `input/keyboard_driver.cpp` (`--hid.drivers=keyboard,sdl3 --hid.shared_pads=true`), bindings in
+  `grawbox-keys.txt`. Keys tested in the GRAW 1 menu with synthetic input; the mouse and gameplay are untested.
+- **Button prompts** show the bound keys on the native renderer (`native.prompts`): GRAW 2's font and HUD atlas, and GRAW 1's
+  menu A and B and HUD stick icons. GRAW 1's other buttons (X, Y, triggers, BACK, in-text icons) are still the pad's:
+  `GRAWBOX_NATIVE_PROMPT_DUMP=<folder>` writes small textures to find them.
 - The GRAW 1 build had cached the stock SDK's path, so it was not using the patched SDK; `tools/build.ps1` now sets it.
 
 ## Next
