@@ -34,8 +34,9 @@ $scripts = @(
     @('NATIVE-720P', 'native', 1, ''),
     @('NATIVE-1440P', 'native', 2, ''),
     @('NATIVE-4K', 'native', 3, ''),
-    @('NATIVE-4K-SOFT-HAZE', 'native', 3, '--native.haze=soft'),
-    @('NATIVE-4K-NO-HAZE', 'native', 3, '--native.haze=off'),
+    @('NATIVE-4K-AO', 'native', 3, '--native.ambient_occlusion=80'),
+    @('NATIVE-4K-AO-SHARP', 'native', 3, '--native.ambient_occlusion=80 --native.sharpness=0.5 --native.mip_bias=-0.5'),
+    @('NATIVE-4K-ORIGINAL-HAZE', 'native', 3, '--native.haze=original'),
     @('EMULATED-THEN-F9', 'emulated', 3, ''),
     @('NATIVE-4K-KEYBOARD', 'native', 3, '--hid.drivers=keyboard,sdl3 --hid.shared_pads=true')
 )

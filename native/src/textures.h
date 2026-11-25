@@ -246,6 +246,9 @@ class TextureCache {
   static constexpr uint32_t kMemorySize = (512u << 20);
   // [start, *end) of [start, start + length) within kMemorySize; false if that is empty.
   static bool ClampRange(uint32_t start, uint32_t length, uint32_t* end);
+  // For a texture with mips whose every level is a resolved image: binds a copy of them at the draw
+  // resolution. False at 1x or when a level is missing.
+  bool CopyResolvedScaled(Texture& t, ID3D12GraphicsCommandList* list);
   bool CopyResolved(Texture& t, ID3D12GraphicsCommandList* list);
   // The resolved image CopyResolved copies into t from `image`, or null if its format family
   // does not match.

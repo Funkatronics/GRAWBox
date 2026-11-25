@@ -29,3 +29,5 @@
 - **2026-11-25, branches:** work may go to a branch and be pushed there without asking; `main` still needs the owner's approval.
 - **2026-11-25, haze:** on by default, as the games ask for it, with a setting to turn it off. Owner's choice.
 - **2026-11-25, Rust:** the owner approved installing rustup with the stable MSVC toolchain for the launcher.
+- **2026-11-25, haze fix:** the owner asked for the haze fixed rather than removed. `fixed` is the default; `original` and
+  `off` stay selectable. Ambient occlusion and sharpening are off by default.

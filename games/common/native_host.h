@@ -18,9 +18,15 @@ class NativeSettings : public rex::SettingOwner {
               rex::Allowed("native", "emulated", "off"), rex::kRestart);
   REX_SETTING(rex::i32, resolution_scale, 1, "Resolution scale of the native renderer",
               rex::Range{1, 3}, rex::kRestart);
-  REX_SETTING(std::string, haze, "on",
-              "The games' distance haze: on, soft (less blur, no double image) or off",
-              rex::Allowed("on", "soft", "off"), rex::kRestart);
+  REX_SETTING(std::string, haze, "fixed",
+              "The games' distance haze: fixed (no double image, no bleeding), original or off",
+              rex::Allowed("fixed", "original", "off"), rex::kRestart);
+  REX_SETTING(rex::i32, ambient_occlusion, 0, "Ambient occlusion, its strength in percent",
+              rex::Range{0, 100}, rex::kRestart);
+  REX_SETTING(rex::f64, sharpness, 0.0, "Sharpening of the scene", rex::Range{0.0, 1.0},
+              rex::kRestart);
+  REX_SETTING(rex::f64, mip_bias, 0.0, "Texture sharpness: below 0 sharper, above 0 softer",
+              rex::Range{-2.0, 2.0}, rex::kRestart);
   REX_SETTING(rex::i32, anisotropy, 16, "Anisotropic texture filtering, 1 for the game's own",
               rex::Range{1, 16}, rex::kRestart);
   REX_SETTING(std::string, prompts, "auto",

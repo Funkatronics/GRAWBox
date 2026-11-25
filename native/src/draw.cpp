@@ -16,6 +16,7 @@
 #include "log.h"
 #include "pipeline_library.h"
 #include "pipeline_store.h"
+#include "post.h"
 #include "profile.h"
 #include "render_targets.h"
 #include "d3d12_backend.h"
@@ -701,6 +702,9 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   // The host indices of the triangle fan `s` (s.count >= 3) in upload memory tagged `tag`.
   FanIndices UploadFanIndices(const DrawState& s, uint64_t tag);
   void ResetListState();
+  // PostProcess::Run with what the haze draw `s` reads.
+  bool Post(const DrawState& s, ID3D12GraphicsCommandList* list);
+  PostProcess post;
   // Gives the shared buffer memory under [start, start + length) if it is reserved. Any thread;
   // the tile mappings are queued ahead of the copies the caller records afterwards.
   bool MapShared(uint32_t start, uint32_t length) override;
@@ -1018,6 +1022,26 @@ void DrawRenderer::Impl::ResetListState() {
   bound_rt_count = UINT32_MAX;
   bound_ibv = {};
   for (CachedCbv* cb : Cbvs()) cb->bound = 0;
+}
+
+bool DrawRenderer::Impl::Post(const DrawState& s, ID3D12GraphicsCommandList* list) {
+  auto image = [&](uint32_t fetch) {
+    return r.resolver().Find(s.fetch(fetch)[1] & 0x1FFFF000u);
+  };
+  const ResolvedImage* const scene = image(0);
+  const ResolvedImage* const depth = image(2);
+  if (!scene || !depth) return false;
+  auto constant = [&](uint32_t base, uint32_t i) {
+    return reinterpret_cast<const float*>(&s.regs[base + i * 4]);
+  };
+  HazeConstants c;
+  std::copy_n(constant(XE_GPU_REG_SHADER_CONSTANT_000_X, 8), 4, c.wave);
+  std::copy_n(constant(XE_GPU_REG_SHADER_CONSTANT_000_X, 9), 2, c.time);
+  std::copy_n(constant(XE_GPU_REG_SHADER_CONSTANT_000_X, 10), 2, c.shift);
+  c.range = constant(XE_GPU_REG_SHADER_CONSTANT_256_X, 1)[0];
+  if (!post.Run(device, list, r.frame_index(), *scene, *depth, c)) return false;
+  ResetListState();
+  return true;
 }
 
 void DrawRenderer::Impl::TransitionShared(ID3D12GraphicsCommandList* list,
@@ -2646,6 +2670,11 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
   if (!pso) return;
   profile::Mark(profile::kPipeline);
 
+  // The picture is ready for the haze pass: draw the haze, ambient occlusion and sharpening.
+  bool haze_drawn = false;
+  if (ps && PostProcess::Wanted() && IsHazeShader(ps->ucode_data_hash()))
+    haze_drawn = Post(s, list) && PostProcess::DrawsHaze();
+
   // Textures and samplers (bindless descriptor indices, b4).
   const uint32_t used_textures = vs->GetUsedTextureMaskAfterTranslation() |
                                  (ps ? ps->GetUsedTextureMaskAfterTranslation() : 0);
@@ -2672,16 +2701,15 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
 
   // Float constants packed by the shaders' maps (UpdateBindings), compared and staged in place.
   // The haze pass mixes in a blurred copy and one displaced by c10.xy of the vertex shader, by
-  // distance / c1.x of the pixel shader. "soft": no displaced copy, and less of the blur; "off":
-  // the distance so large that nothing is mixed in.
-  static const std::string haze = REXCVAR_GET(graw_native_haze);
-  if (haze != "on" && ps && IsHazeShader(ps->ucode_data_hash())) {
+  // distance / c1.x of the pixel shader. With the haze drawn already, or off: the distance so large
+  // that nothing is mixed in.
+  static const bool haze_off = REXCVAR_GET(graw_native_haze) == "off";
+  if ((haze_drawn || haze_off) && ps && IsHazeShader(ps->ucode_data_hash())) {
     uint32_t* const range = const_cast<uint32_t*>(&s.regs[XE_GPU_REG_SHADER_CONSTANT_256_X + 4]);
     uint32_t* const shift =
         const_cast<uint32_t*>(&s.regs[XE_GPU_REG_SHADER_CONSTANT_000_X + 10 * 4]);
     const uint32_t old_range = *range, old_shift[2] = {shift[0], shift[1]};
-    *range = haze == "soft" ? std::bit_cast<uint32_t>(std::bit_cast<float>(old_range) * 2.5f)
-                            : 0x7149F2CAu;  // 1e30
+    *range = 0x7149F2CAu;  // 1e30
     shift[0] = shift[1] = 0;
     PackFloats(cb_float_vs, vs, s.regs, XE_GPU_REG_SHADER_CONSTANT_000_X);
     PackFloats(cb_float_ps, ps, s.regs, XE_GPU_REG_SHADER_CONSTANT_256_X);

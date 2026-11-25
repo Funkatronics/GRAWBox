@@ -129,11 +129,18 @@ See `docs/RENDERER.md`. Everything below is from WARP only; nothing has run on a
   tracker now takes the first tile's. Tree, building and prop shadows look right on WARP at 1x and 2x; not yet seen on a real GPU.
 - **Textures less sharp** than emulated, mostly at angles and distance, both games. `native.anisotropy` now defaults to 16
   (was 1); not compared yet. Wanted: filtering levels as a player setting.
-- **Wanted**: other visual options, such as ambient occlusion (COGBox has it). Not looked into yet.
 - **GRAW 1 stutters a lot**, seemingly on both renderers. Needs longer play.
-- **Haze**: with `native.haze=off` the ghosting is gone but the world looks too flat and clean. Wanted: the haze fixed, or
-  an alternative, rather than removed. `native.haze=soft` now keeps a weaker blur without the displaced double; not judged yet.
-  A real fix would be a blur that respects depth, at the draw resolution.
+- **Haze**: with it off the ghosting is gone but the world looks too flat and clean; `soft` looked no different (removed).
+
+### Second real GPU test, GRAW 2 only (tester reports)
+
+- Textures look much closer; emulated still a hair sharper. Cause not known. `native.sharpness` and `native.mip_bias` are new.
+- **Shadows** present and mostly correct, but with more jagged edges and very unstable against emulated. Cause: the shadow
+  atlas (1024x1024, three mip levels, each a resolve) was sampled from its 1x copies at any scale. Now at the draw
+  resolution, confirmed in the log at 2x; not yet seen on a real GPU.
+- **Haze** redone as `native.haze=fixed`, the new default: see `docs/RENDERER.md`. On WARP, GRAW 2 mission at 1x and 2x: distance
+  haze without the double image, no halo around the player. Not yet seen on a real GPU.
+- **Ambient occlusion** (`native.ambient_occlusion`, off by default) works on WARP in GRAW 2. Cost on a real GPU not measured.
 
 ## Next
 

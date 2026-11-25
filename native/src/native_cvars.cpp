@@ -48,6 +48,10 @@ REXCVAR_DEFINE_DOUBLE(graw_native_mip_bias, 0.0, "GRAW native",
 REXCVAR_DEFINE_INT32(graw_native_anisotropy, 1, "GRAW native",
                      "Anisotropic filtering of the game's linearly filtered textures with mips, "
                      "at least this many samples per pixel (2, 4, 8 or 16; 1: the game's own)");
-REXCVAR_DEFINE_STRING(graw_native_haze, "on", "GRAW native",
-                      "The games' distance haze (blur and displaced double of the picture): on, soft "
-                      "(less blur, no double) or off");
+REXCVAR_DEFINE_STRING(graw_native_haze, "fixed", "GRAW native",
+                      "The games' distance haze: fixed (post.h), original (blurred and doubled as the "
+                      "games draw it) or off");
+REXCVAR_DEFINE_INT32(graw_native_ao, 0, "GRAW native",
+                     "Ambient occlusion, its strength in percent (0: none)");
+REXCVAR_DEFINE_DOUBLE(graw_native_sharpness, 0.0, "GRAW native",
+                      "Sharpening of the scene, 0 to 1");

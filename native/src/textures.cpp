@@ -69,6 +69,10 @@ struct TextureCache::Texture {
   ID3D12Resource* alias = nullptr;
   // When `alias` is a scaled image: its guest-sized twin, the texels at this texture's size.
   ID3D12Resource* alias_guest_sized = nullptr;
+  // For a texture with mips that resolves cover: all its levels at the draw resolution, and the
+  // resolves they hold (CopyResolvedScaled).
+  ComPtr<ID3D12Resource> scaled;
+  std::vector<uint64_t> scaled_seq;
   uint32_t uploads = 0;  // Upload calls so far (the slow-upload log)
   uint32_t slot = 0;
   uint64_t placed = kCommitted, bytes = 0;  // CreateTextureResource's placement and size
@@ -533,6 +537,7 @@ void TextureCache::EvictOverBudget(uint64_t completed_fence) {
       break;
     evict_batch_.push_back(t);
     evict_resources_.push_back(t->resource.Get());
+    if (t->scaled) evict_resources_.push_back(t->scaled.Get());
     bytes -= t->bytes;
   }
   if (evict_batch_.empty()) return;
@@ -792,8 +797,89 @@ bool TextureCache::ResolvesCoverAll(const Texture& t) const {
   return all && covered == t.resolved_seq.size();
 }
 
+bool TextureCache::CopyResolvedScaled(Texture& t, ID3D12GraphicsCommandList* list) {
+  const TextureKey& key = t.key;
+  const size_t levels = t.resolved_seq.size();
+  if (levels < 2 || levels > 16 || key.is_3d() || key.array_size() != 1) return false;
+  ID3D12Resource* sources[16] = {};
+  uint64_t seqs[16] = {};
+  uint32_t scale = 0;
+  size_t found = 0;
+  ForEachResolveAddress(key, t.layout, [&](size_t index, uint32_t address) {
+    const ResolvedImage* image = resolved_lookup_(address);
+    ID3D12Resource* source = image ? ResolvedSource(t, *image) : nullptr;
+    if (!source) return;
+    ID3D12Resource* const scaled = source == image->texture      ? image->texture_scaled
+                                   : source == image->depth_r32f ? image->depth_r32f_scaled
+                                                                 : nullptr;
+    if (!scaled || (scale && scale != image->scale)) return;
+    scale = image->scale;
+    // The level must be the image, and the same size in a mip chain of the scaled texture.
+    const D3D12_RESOURCE_DESC sd = scaled->GetDesc();
+    if (sd.Width != uint64_t(key.width >> index) * scale ||
+        sd.Height != (key.height >> index) * scale ||
+        sd.Width != (uint64_t(key.width) * scale) >> index ||
+        sd.Height != (key.height * scale) >> index)
+      return;
+    sources[index] = scaled;
+    seqs[index] = image->seq;
+    ++found;
+  });
+  if (found != levels) return false;
+  bool created = false;
+  if (!t.scaled) {
+    D3D12_RESOURCE_DESC d = t.resource->GetDesc();
+    d.Width *= scale;
+    d.Height *= scale;
+    d.Alignment = 0;
+    D3D12_HEAP_PROPERTIES hp = {};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    const HRESULT hr = device_->CreateCommittedResource(
+        &hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+        IID_PPV_ARGS(t.scaled.GetAddressOf()));
+    if (FAILED(hr)) {
+      GRAW_LOG_FIRST(1, ERROR, "GRAW native textures: scaled texture {}x{} failed: {:08X}",
+                     uint32_t(d.Width), d.Height, uint32_t(hr));
+      return false;
+    }
+    REXLOG_INFO("GRAW native textures: {:08X} {}x{} {} mips at the draw resolution",
+                key.base_page << 12, uint32_t(d.Width), d.Height, levels);
+    t.scaled_seq.assign(levels, 0);
+    created = true;
+  }
+  bool copied = false;
+  for (size_t i = 0; i < levels; ++i) {
+    if (t.scaled_seq[i] == seqs[i]) continue;
+    if (!copied && !created) {
+      const D3D12_RESOURCE_BARRIER b =
+          TransitionBarrier(t.scaled.Get(), kShaderRead, D3D12_RESOURCE_STATE_COPY_DEST);
+      list->ResourceBarrier(1, &b);
+    }
+    copied = true;
+    D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
+    dst.pResource = t.scaled.Get();
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.SubresourceIndex = UINT(i);
+    src.pResource = sources[i];
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    t.scaled_seq[i] = seqs[i];
+    ++stats_.resolved_copies;
+  }
+  if (copied) {
+    const D3D12_RESOURCE_BARRIER b =
+        TransitionBarrier(t.scaled.Get(), D3D12_RESOURCE_STATE_COPY_DEST, kShaderRead);
+    list->ResourceBarrier(1, &b);
+  }
+  SetAlias(t, t.scaled.Get(), t.resource.Get());
+  return true;
+}
+
 bool TextureCache::CopyResolved(Texture& t, ID3D12GraphicsCommandList* list) {
   const TextureKey& key = t.key;
+  if (CopyResolvedScaled(t, list)) return true;
+  // Leaving the scaled levels: the copies below bring the resource up to date.
+  if (t.alias && t.alias == t.scaled.Get()) SetAlias(t, nullptr);
   // A 2D texture with one subresource that a resolved image of its format family covers
   // exactly binds that image in place of its resource: no copy, and the draws read the texels
   // the resolve wrote. Most resolve destinations (full-screen buffers, shadow maps) are such
