@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -364,23 +365,46 @@ XInputGetStateFn XInputGetState() {
   return fn;
 }
 
-// A controller in use: a button or trigger down, or a stick well off its centre.
+// A controller used since the last call: its state changed in a way a person makes (a button or
+// trigger, or a stick moved well off its centre), not the small drift of a resting stick.
 bool PadUsed() {
   const XInputGetStateFn get = XInputGetState();
   if (!get) return false;
-  struct {
+  struct State {
     DWORD packet;
     WORD buttons;
     BYTE lt, rt;
     SHORT lx, ly, rx, ry;
-  } s;
+  };
+  static State last[4] = {};
+  bool used = false;
   for (DWORD i = 0; i < 4; ++i) {
-    if (get(i, &s) != ERROR_SUCCESS) continue;
+    State s;
+    if (get(i, &s) != ERROR_SUCCESS || s.packet == last[i].packet) continue;
+    const State& o = last[i];
+    auto moved = [](int a, int b, int by) { return std::abs(a - b) > by; };
     auto off = [](SHORT v) { return v > 12000 || v < -12000; };
-    if (s.buttons || s.lt > 60 || s.rt > 60 || off(s.lx) || off(s.ly) || off(s.rx) || off(s.ry))
-      return true;
+    if (s.buttons != o.buttons || moved(s.lt, o.lt, 40) || moved(s.rt, o.rt, 40) ||
+        ((off(s.lx) || off(s.ly) || off(s.rx) || off(s.ry)) &&
+         (moved(s.lx, o.lx, 4000) || moved(s.ly, o.ly, 4000) || moved(s.rx, o.rx, 4000) ||
+          moved(s.ry, o.ry, 4000))))
+      used = true;
+    last[i] = s;
   }
-  return false;
+  return used;
+}
+
+// A key or mouse button pressed since the last call.
+bool KeyPressed() {
+  static bool down[256] = {};
+  bool pressed = false;
+  for (int k = 1; k < 256; ++k) {
+    if (k >= 0xC3 && k <= 0xDA) continue;  // VK_GAMEPAD_*: Windows can report a controller as keys
+    const bool now = (GetAsyncKeyState(k) & 0x8000) != 0;
+    if (now && !down[k]) pressed = true;
+    down[k] = now;
+  }
+  return pressed;
 }
 }  // namespace
 
@@ -398,17 +422,22 @@ bool PromptsShown() {
 
 bool PollPromptDevice() {
   if (!Labels().count("@auto")) return false;
-  // Keyboard and mouse input (a controller does not count as input there).
+  // The last device used wins. A controller also counts as input to Windows (GetLastInputInfo):
+  // that is mouse motion only while no controller was used in the last half second.
   static DWORD last_input = 0;
-  LASTINPUTINFO info = {sizeof(info)};
-  const bool keys = GetLastInputInfo(&info) && last_input && info.dwTime != last_input;
-  last_input = info.dwTime;
+  static ULONGLONG pad_at = 0;
+  const ULONGLONG now = GetTickCount64();
   const bool pad = PadUsed();
+  if (pad) pad_at = now;
+  LASTINPUTINFO info = {sizeof(info)};
+  const bool any = GetLastInputInfo(&info) && last_input && info.dwTime != last_input;
+  last_input = info.dwTime;
+  const bool keys = KeyPressed() || (any && !pad && now - pad_at > 500);
   const bool before = g_keyboard_last.load(std::memory_order_relaxed);
-  const bool now = pad ? false : keys ? true : before;
-  if (now == before) return false;
-  g_keyboard_last.store(now, std::memory_order_relaxed);
-  REXLOG_INFO("GRAW native prompts: {}", now ? "keys" : "controller buttons");
+  const bool keyboard = pad ? false : keys ? true : before;
+  if (keyboard == before) return false;
+  g_keyboard_last.store(keyboard, std::memory_order_relaxed);
+  REXLOG_INFO("GRAW native prompts: {}", keyboard ? "keys" : "controller buttons");
   return true;
 }
 

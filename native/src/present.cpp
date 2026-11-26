@@ -334,6 +334,15 @@ bool Presenter::Impl::CaptureRequested(uint64_t frame) {
     request_poll = 0;
     std::error_code ec;
     if (std::filesystem::remove(capture_request, ec)) want = true;
+    // Debug: <dir>\memory.request writes the guest's physical memory to <dir>\memory-f<frame>.bin.
+    if (std::filesystem::remove(capture_dir / "memory.request", ec)) {
+      const auto path = capture_dir / ("memory-f" + std::to_string(frame) + ".bin");
+      if (std::FILE* f = std::fopen(path.string().c_str(), "wb")) {
+        std::fwrite(rex::system::kernel_memory()->physical_membase(), 1, size_t(512) << 20, f);
+        std::fclose(f);
+        REXLOG_INFO("GRAW native: guest memory written to {}", path.string());
+      }
+    }
   }
   if (want) {
     burst_left = std::max(REXCVAR_GET(graw_native_capture_burst), 1) - 1;

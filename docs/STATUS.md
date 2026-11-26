@@ -31,6 +31,10 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   B held and the d-pad scroll the weapons; a tap goes back to the last. There is no sprint.
 - GRAW 1 prompts still showing the pad: X, Y, triggers, BACK, in-text icons.
 - Native renderer: no occlusion queries (a fixed count is reported); Vulkan not brought over; system dialogs not tested.
+- **Field of view and ultrawide** (wanted): the games draw 1280x720 and are pillarboxed on 21:9. The projection is built each
+  frame and kept nowhere but the GPU command buffer (GRAW 2, memory dump in gameplay): vertical field of view 0.8 rad in GRAW 2,
+  0.75 in GRAW 1 (70 degrees across), 16:9. Scaling it in the renderer would break GRAW 2's screen-space shadows, which rebuild
+  positions with the game's matrices, so the camera code has to be found. `<capture dir>\memory.request` dumps guest memory.
 - Not tested: drone and squad feeds beyond the first mission, loading GRAW 1 saves, later missions, returning to the front end.
 
 ## Findings worth keeping
