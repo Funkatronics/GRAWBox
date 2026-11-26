@@ -38,8 +38,9 @@ $scripts = @(
     @('NATIVE-4K-AO-SHARP', 'native', 3, '--native.ambient_occlusion=80 --native.sharpness=0.5'),
     @('NATIVE-4K-HAZE-TUNING', 'native', 3, '--native.haze_tuning=true --native.ambient_occlusion=80 --native.sharpness=0.5'),
     @('CAPTURE-F12', 'native', 3, '', 'set GRAWBOX_NATIVE_CAPTURE_DIR=%~dp0captures& set GRAWBOX_NATIVE_CAPTURE_XENOS=false& set GRAWBOX_NATIVE_CAPTURE_BURST=6& set GRAWBOX_NATIVE_MARK_AUDIT=3& if not exist captures mkdir captures'),
-    @('FPS-120', 'native', 3, '--ui.video_mode_refresh_rate=120 --native.vsync=false'),
-    @('FPS-UNLOCKED', 'native', 3, '--gpu.vsync=false --native.vsync=false'),
+    @('SKY-1-WAIT-GPU', 'native', 3, '', 'set GRAWBOX_NATIVE_GPU_SERIALIZE=true'),
+    @('SKY-2-ONE-SUBMIT', 'native', 3, '', 'set GRAWBOX_NATIVE_SUBMIT_DRAWS=0'),
+    @('SKY-3-NO-CAPTURE-ORDER', 'native', 3, '', 'set GRAWBOX_NATIVE_TEXTURE_CAPTURE_ORDER=false'),
     @('NATIVE-4K-ORIGINAL-HAZE', 'native', 3, '--native.haze=original'),
     @('EMULATED-THEN-F9', 'emulated', 3, ''),
     @('NATIVE-4K-KEYBOARD', 'native', 3, '--hid.drivers=keyboard,sdl3 --hid.shared_pads=true')
