@@ -42,6 +42,16 @@ $scripts = @(
     @('EMULATED-THEN-F9', 'emulated', 3, ''),
     @('NATIVE-4K-KEYBOARD', 'native', 3, '--hid.drivers=keyboard,sdl3 --hid.shared_pads=true')
 )
+# GRAW 2 only: field of view and aspect ratio (games/graw2-campaign/src/camera.cpp).
+if ($Game -eq 'graw2') {
+    $scripts += @(
+        @('NATIVE-4K-FOV-130', 'native', 3, '--native.field_of_view=130'),
+        @('NATIVE-4K-FOV-85', 'native', 3, '--native.field_of_view=85'),
+        @('NATIVE-4K-WIDE-DISPLAY', 'native', 3, '--native.aspect_ratio=display'),
+        @('NATIVE-4K-WIDE-21x9', 'native', 3, '--native.aspect_ratio=21:9'),
+        @('NATIVE-4K-WIDE-DISPLAY-FOV-115', 'native', 3, '--native.aspect_ratio=display --native.field_of_view=115')
+    )
+}
 foreach ($s in $scripts) {
     $lines = @(
         '@echo off', 'cd /d "%~dp0"',
