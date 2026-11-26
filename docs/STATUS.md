@@ -77,7 +77,7 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   end and in play), so there is no cheap menu/HUD switch. Next: find where that GUI takes its 1280x720 and give it
   the wider width (1680x720 at 21:9), so it lays out for the wide screen itself; the per-draw squeeze is the fallback.
   The GUI's pixel-to-clip matrix is built in sub_8237C410 (2/1280 at 0x8202B774, -2/720 at 0x8202B770, an x offset
-  from +380 of the GUI object at *(0x8251EE00)) and set as c0..c3 by sub_82591FA8; then sub_826B57A8 draws the
+  from +380 of the GUI object at *(0x8287EF00)) and set as c0..c3 by sub_82591FA8; then sub_826B57A8 draws the
   widget trees. Changing that matrix alone gives the centred 16:9 HUD (menus whole, world markers off target).
   Whether the widgets are placed by anchors (and would follow a wider root) or at fixed 1280-wide positions is
   not known yet; 1280.0 / 720.0 (0x82000FC8 / FC4) are also read by sub_8231AE90, sub_82350A70 and sub_8238B778.
