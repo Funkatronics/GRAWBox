@@ -11,6 +11,8 @@ pub struct Game {
     pub id: &'static str,
     pub name: &'static str,
     pub entry: &'static str,
+    /// The Xbox 360 title ID: names the game's folders in its save data.
+    pub title_id: &'static str,
     /// Files the port is made from, and their SHA-1. The updates come from the title update.
     disc: &'static [(&'static str, &'static str)],
     update: &'static [(&'static str, &'static str)],
@@ -21,6 +23,7 @@ pub const GAMES: [Game; 2] = [
         id: "graw1",
         name: "Advanced Warfighter",
         entry: "Yeti_Final_Xenon.exe",
+        title_id: "555307D5",
         disc: &[("Yeti_Final_Xenon.exe", "5243428702092fa5a99a9ee5e1542ad71b003245")],
         update: &[("Yeti_Final_Xenon.exep", "6a4013a5c5424e1f0f1491554cc2b1fbca8a33c5")],
     },
@@ -28,6 +31,7 @@ pub const GAMES: [Game; 2] = [
         id: "graw2",
         name: "Advanced Warfighter 2",
         entry: "Yeti_Final_Xenon.xex",
+        title_id: "555307F0",
         disc: &[
             ("Yeti_Final_Xenon.xex", "67a3d13a9d599a7cc4f069124a4f46f359ea5a96"),
             ("AI_X360_F.xex", "11d1a4e5cb921fd98aa6eb5f517ba73ed52b5b60"),
@@ -75,6 +79,16 @@ impl Game {
         }
     }
 
+    /// The game's save data (ReXGlue's user folder).
+    pub fn user_dir(&self) -> PathBuf {
+        self.data().join("user")
+    }
+
+    /// Saves replaced by an import, newest last.
+    pub fn backup_dir(&self) -> PathBuf {
+        self.data().join("save backups")
+    }
+
     pub fn log(&self) -> PathBuf {
         self.data().join("game.log")
     }
@@ -117,7 +131,7 @@ impl Game {
         let mut args = vec![
             format!("--title.game_root={}", self.game_dir(s).display()),
             format!("--title.entry={}", self.entry),
-            format!("--app.user_root={}", data.join("user").display()),
+            format!("--app.user_root={}", self.user_dir().display()),
             format!("--app.cache_root={}", data.join("cache").display()),
             format!("--log.file_name={}", self.log().display()),
         ];

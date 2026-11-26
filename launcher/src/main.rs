@@ -4,6 +4,7 @@
 mod extract;
 mod game;
 mod keyboard;
+mod saves;
 mod settings;
 mod sha1;
 mod theme;
@@ -25,6 +26,7 @@ enum Tab {
     Graphics,
     Controls,
     Files,
+    Saves,
 }
 
 /// A control waiting for a key. Keys held when it began do not count.
@@ -52,7 +54,16 @@ impl App {
         App {
             saved: settings.clone(),
             settings,
-            tab: if ready { Tab::Play } else { Tab::Files },
+            // GRAWBOX_LAUNCHER_TAB (play, graphics, controls, files, saves): the first tab, for screenshots.
+            tab: match std::env::var("GRAWBOX_LAUNCHER_TAB").as_deref() {
+                Ok("graphics") => Tab::Graphics,
+                Ok("controls") => Tab::Controls,
+                Ok("files") => Tab::Files,
+                Ok("saves") => Tab::Saves,
+                Ok("play") => Tab::Play,
+                _ if ready => Tab::Play,
+                _ => Tab::Files,
+            },
             running: None,
             checking: None,
             import: None,
@@ -305,6 +316,49 @@ impl App {
         }
     }
 
+    fn saves_tab(&mut self, ui: &mut egui::Ui) {
+        card(ui, |ui| {
+            ui.label(RichText::new("Your saves").strong());
+            ui.label("Each game keeps its saves here. Export copies them to a folder you choose. Import replaces them with an exported copy; the saves it replaces are kept in the game's \"save backups\" folder.");
+        });
+        for i in 0..GAMES.len() {
+            let g = &GAMES[i];
+            let running = self.running.as_ref().is_some_and(|r| r.0 == i);
+            card(ui, |ui| {
+                ui.label(RichText::new(g.name).strong());
+                let user = g.user_dir();
+                match saves::last_saved(&user, g.title_id) {
+                    Some(t) => ui.label(format!("Saved {} (UTC)", saves::stamp(t))),
+                    None => ui.label("No save yet"),
+                };
+                ui.label(RichText::new(user.display().to_string()).weak().small());
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Open folder").clicked() {
+                        let _ = std::fs::create_dir_all(&user);
+                        let _ = std::process::Command::new("explorer").arg(&user).spawn();
+                    }
+                    if ui.button("Export").clicked() {
+                        if let Some(into) = rfd::FileDialog::new().set_title("Export to").pick_folder() {
+                            self.message = Some(match saves::export(&user, g.title_id, g.name, &into) {
+                                Ok(p) => (true, format!("Exported to {}", p.display())),
+                                Err(e) => (false, e),
+                            });
+                        }
+                    }
+                    if ui.add_enabled(!running, egui::Button::new("Import")).on_disabled_hover_text("Close the game first.").clicked() {
+                        if let Some(from) = rfd::FileDialog::new().set_title("An exported save").pick_folder() {
+                            self.message = Some(match saves::import(&user, g.title_id, g.name, &from, &g.backup_dir()) {
+                                Ok(Some(b)) => (true, format!("Imported. The previous saves are in {}", b.display())),
+                                Ok(None) => (true, "Imported.".into()),
+                                Err(e) => (false, e),
+                            });
+                        }
+                    }
+                });
+            });
+        }
+    }
+
     fn files_tab(&mut self, ui: &mut egui::Ui) {
         card(ui, |ui| {
             ui.label(RichText::new("Your own game files").strong());
@@ -363,7 +417,7 @@ impl eframe::App for App {
         let time = ctx.input(|i| i.time);
         theme::background(ui.painter(), ui.max_rect(), time);
         ctx.request_repaint_after(Duration::from_millis(50));
-        let titles = [(Tab::Play, "Campaign"), (Tab::Graphics, "Graphics"), (Tab::Controls, "Controls"), (Tab::Files, "Game files")];
+        let titles = [(Tab::Play, "Campaign"), (Tab::Graphics, "Graphics"), (Tab::Controls, "Controls"), (Tab::Files, "Game files"), (Tab::Saves, "Saves")];
         let title = titles.iter().find(|t| t.0 == self.tab).map_or("", |t| t.1);
         egui::Panel::top("head").show_separator_line(false).frame(egui::Frame::new().inner_margin(egui::Margin { left: 18, right: 0, top: 10, bottom: 0 })).show(ui, |ui| {
             theme::header(ui, title);
@@ -402,6 +456,7 @@ impl eframe::App for App {
                     Tab::Graphics => self.graphics_tab(ui),
                     Tab::Controls => self.controls_tab(ui),
                     Tab::Files => self.files_tab(ui),
+                    Tab::Saves => self.saves_tab(ui),
                 }
             });
         });
