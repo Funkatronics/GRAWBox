@@ -1,32 +1,22 @@
-﻿# Builds a GRAWBox release from a clean checkout and, with -Publish, tags it and uploads it to GitHub.
+# Builds a GRAWBox release from a clean checkout and, with -Publish, tags it and uploads it to GitHub.
 #   tools/release.ps1 -Version 0.1.0 -SdkSource <rexglue-sdk clone> [-Notes <file>] [-SkipBuild] [-Publish] [-Prerelease]
-#   tools/release.ps1 -Test -SdkSource <rexglue-sdk clone> [-SkipBuild]   a local test build of the current branch,
-#     in private\test-builds\, never published
 # Needs everything tools/build.ps1 needs (Visual Studio C++ tools, .tools/, the owner's extracted files in
 # private/<game>/), Rust (cargo), and for -Publish the GitHub CLI (gh), logged in. See docs/RELEASING.md.
 # The zip holds GRAWBox.exe and the built programs (with their recompiled code) and never any game file.
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
+    [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
     [string]$SdkSource,
     [string]$Notes,
     [switch]$SkipBuild,
     [switch]$Publish,
-    [switch]$Prerelease,
-    [switch]$Test
+    [switch]$Prerelease
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-if ($Test) {
-    if ($Publish -or $Version) { Write-Host 'release: -Test takes no -Version or -Publish' -ForegroundColor Red; exit 1 }
-    $tag = "test-$(git -C $root rev-parse --abbrev-ref HEAD)-$(git -C $root rev-parse --short HEAD)"
-    $out = Join-Path $root "private\test-builds\$tag"
-} else {
-    if (-not $Version) { Write-Host 'release: -Version X.Y.Z or -Test is needed' -ForegroundColor Red; exit 1 }
-    $tag = "v$Version"
-    $out = Join-Path $root "private\release\$tag"
-}
+$tag = "v$Version"
 $name = "GRAWBox-$tag-windows-x64"
+$out = Join-Path $root "private\release\$tag"
 $sdk = Join-Path $root '.tools\rexglue-grawbox'
 Set-Location $root
 

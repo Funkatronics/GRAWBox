@@ -22,17 +22,6 @@ the build folders, so a library copied there by hand for a test does not ship.
 
 Asset names keep this pattern so update tools (Obtainium) can match them: `GRAWBox-v<version>-windows-x64.zip`.
 
-## Test builds first
-
-Work is done on its own branch, and anything experimental goes to the owner as a local test build before a
-release: the same build and layout, named after the branch and commit, never tagged or uploaded.
-
-```powershell
-tools/release.ps1 -Test -SdkSource <rexglue-sdk clone>   # private/test-builds/test-<branch>-<commit>/
-```
-
-Hand it over with a short checklist of what to try. Merge and release only after it passes.
-
 ## Before
 
 1. Everything for the release is committed and pushed, the tree is clean (the script checks both).
