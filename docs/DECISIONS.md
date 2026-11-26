@@ -38,3 +38,9 @@
   Crate licenses checked; all permissive (self_cell taken under Apache-2.0). Windows only for now.
 - **2026-11-25, releases:** releases ship the built programs, as other recompiled ports do, with the launcher. Game files,
   assets, title updates and keys never ship; translated source is never committed. Owner's rule from the start.
+
+## Releases are built locally
+
+Releases are built on the developer's machine with tools/release.ps1 and uploaded with gh (docs/RELEASING.md), not by
+CI: the programs are built from the owner's game files, which stay on that machine. CI builds and tests the launcher only.
+A private repository with the files for CI can replace this later.

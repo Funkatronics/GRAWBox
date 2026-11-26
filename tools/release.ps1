@@ -26,6 +26,12 @@ function Step($message) { Write-Host "release: $message" -ForegroundColor Cyan }
 # 1. Clean tree: the release is what the tag names.
 if (git status --porcelain --untracked-files=no) { Fail 'the working tree has changes; commit them first' }
 if ($Publish) {
+    if (-not $Notes -or -not (Test-Path $Notes)) { Fail '-Notes <file> is needed to publish' }
+    $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
+    if (-not $gh) { $gh = Join-Path $env:ProgramFiles 'GitHub CLI\gh.exe' }
+    if (-not (Test-Path $gh)) { Fail 'the GitHub CLI (gh) is not installed' }
+    & $gh auth status *> $null
+    if ($LASTEXITCODE) { Fail 'gh is not logged in (gh auth login)' }
     if (git tag --list $tag) { Fail "tag $tag exists" }
     git fetch -q origin
     $branch = git rev-parse --abbrev-ref HEAD
@@ -100,13 +106,12 @@ Step "$zip ($([math]::Round((Get-Item $zip).Length / 1MB)) MB), sha256 $hash"
 
 # 6. Publish: tag the commit and upload the zip to a GitHub release.
 if (-not $Publish) { Step 'not published (-Publish to tag and upload)'; exit 0 }
-if (-not $Notes) { Fail '-Notes <file> is needed to publish' }
 git tag -a $tag -m "GRAWBox $tag"
 if ($LASTEXITCODE) { Fail 'tagging failed' }
 git push -q origin $tag
 if ($LASTEXITCODE) { Fail 'pushing the tag failed' }
 $flags = @('--title', "GRAWBox $tag", '--notes-file', $Notes, '--verify-tag')
 if ($Prerelease) { $flags += '--prerelease' }
-gh release create $tag $zip (Join-Path $out "$name.zip.sha256") @flags
+& $gh release create $tag $zip (Join-Path $out "$name.zip.sha256") @flags
 if ($LASTEXITCODE) { Fail 'gh release create failed' }
 Step "published $tag"
