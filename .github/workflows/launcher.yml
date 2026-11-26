@@ -25,6 +25,9 @@ jobs:
             ~/.cargo/registry
             launcher/target
           key: launcher-${{ hashFiles('launcher/Cargo.lock') }}
+      - name: Font
+        shell: pwsh
+        run: ./launcher/fetch_fonts.ps1
       - name: Test
         working-directory: launcher
         run: cargo test --release --locked
@@ -37,6 +40,7 @@ jobs:
           $name = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'dev' }
           New-Item -ItemType Directory dist/GRAWBox | Out-Null
           Copy-Item launcher/target/release/GRAWBox.exe, LICENSE, README.md dist/GRAWBox/
+          Copy-Item launcher/fonts/OFL.txt dist/GRAWBox/OFL-Rajdhani.txt
           Compress-Archive dist/GRAWBox "dist/GRAWBox-$name-windows-x64.zip"
       - uses: actions/upload-artifact@v5
         with:

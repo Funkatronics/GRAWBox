@@ -24,6 +24,8 @@ Microsoft. Trademarks belong to their owners.
 - [graw360-recomp](https://github.com/Juansolo457/graw360-recomp) (MIT, juansolo457 and
   contributors): its port of the native renderer and the GRAW Direct3D
   research behind it, and the cause of, and labels for, the GRAW 1 HUD blend jump table fix.
+- [Rajdhani](https://github.com/google/fonts/tree/main/ofl/rajdhani) (SIL Open Font License 1.1, Indian Type Foundry): the
+  launcher's font, downloaded at build time.
 
 ## License
 

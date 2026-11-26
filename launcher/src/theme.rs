@@ -99,7 +99,7 @@ pub fn header(ui: &mut Ui, title: &str) {
         Pos2::new(rect.left() + 64.0, band.center().y),
         Align2::LEFT_CENTER,
         title,
-        FontId::proportional(30.0),
+        heading(32.0),
         TEXT,
     );
 }
@@ -113,13 +113,13 @@ pub fn menu_item(ui: &mut Ui, text: &str, selected: bool, width: f32) -> Respons
         let bar = rect.shrink2(Vec2::new(0.0, 2.0)).translate(Vec2::new(14.0, 0.0));
         gradient(p, bar, alpha(SELECT, 235), alpha(SELECT, 0));
         p.rect_filled(Rect::from_min_size(bar.min, Vec2::new(7.0, bar.height())), 0.0, Color32::WHITE);
-        p.text(bar.left_center() + Vec2::new(18.0, 0.0), Align2::LEFT_CENTER, text, FontId::proportional(19.0), Color32::WHITE);
+        p.text(bar.left_center() + Vec2::new(18.0, 0.0), Align2::LEFT_CENTER, text, heading(22.0), Color32::WHITE);
     } else {
         let bar = rect.shrink2(Vec2::new(0.0, 3.0));
         gradient(p, bar, alpha(TEAL, if hover { 70 } else { 38 }), alpha(TEAL, 0));
         p.rect_filled(Rect::from_min_size(bar.min, Vec2::new(3.0, bar.height())), 0.0, alpha(TEAL, 200));
         p.line_segment([bar.left_bottom(), bar.right_bottom() - Vec2::new(bar.width() * 0.35, 0.0)], Stroke::new(1.0, alpha(TEAL, 90)));
-        p.text(bar.left_center() + Vec2::new(14.0, 0.0), Align2::LEFT_CENTER, text, FontId::proportional(18.0), alpha(TEXT, 225));
+        p.text(bar.left_center() + Vec2::new(14.0, 0.0), Align2::LEFT_CENTER, text, heading(21.0), alpha(TEXT, 225));
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -168,7 +168,7 @@ pub fn action(ui: &mut Ui, text: &str, enabled: bool) -> Response {
         rect.left_bottom(),
     ];
     p.add(Shape::convex_polygon(points, fill, Stroke::new(1.0, alpha(Color32::WHITE, if enabled { 160 } else { 40 }))));
-    p.text(rect.center(), Align2::CENTER_CENTER, text, FontId::proportional(21.0), if enabled { Color32::WHITE } else { alpha(TEXT, 120) });
+    p.text(rect.center(), Align2::CENTER_CENTER, text, heading(24.0), if enabled { Color32::WHITE } else { alpha(TEXT, 120) });
     if enabled { response.on_hover_cursor(egui::CursorIcon::PointingHand) } else { response }
 }
 
@@ -183,12 +183,30 @@ pub fn footer(ui: &mut Ui, hints: &[(&str, &str)]) {
         let cap = Rect::from_center_size(Pos2::new(x + 13.0, rect.center().y), Vec2::new(26.0, 22.0));
         p.rect_stroke(cap, 5.0, Stroke::new(1.5, TEXT), StrokeKind::Inside);
         p.text(cap.center(), Align2::CENTER_CENTER, *key, FontId::proportional(12.0), TEXT);
-        let g = p.text(Pos2::new(cap.right() + 8.0, rect.center().y), Align2::LEFT_CENTER, *what, FontId::proportional(16.0), TEXT);
+        let g = p.text(Pos2::new(cap.right() + 8.0, rect.center().y), Align2::LEFT_CENTER, *what, FontId::proportional(18.0), TEXT);
         x = g.right() + 34.0;
     }
 }
 
+/// The bold cut of the launcher's font.
+pub fn heading(size: f32) -> FontId {
+    FontId::new(size, egui::FontFamily::Name("bold".into()))
+}
+
+/// Rajdhani (SIL Open Font License 1.1), fetched by fetch_fonts.ps1 and embedded.
+fn fonts(ctx: &egui::Context) {
+    let mut f = egui::FontDefinitions::default();
+    f.font_data.insert("rajdhani".into(), egui::FontData::from_static(include_bytes!("../fonts/Rajdhani-SemiBold.ttf")).into());
+    f.font_data.insert("rajdhani-bold".into(), egui::FontData::from_static(include_bytes!("../fonts/Rajdhani-Bold.ttf")).into());
+    f.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "rajdhani".into());
+    let mut bold = vec!["rajdhani-bold".to_string()];
+    bold.extend(f.families[&egui::FontFamily::Proportional].iter().skip(1).cloned());
+    f.families.insert(egui::FontFamily::Name("bold".into()), bold);
+    ctx.set_fonts(f);
+}
+
 pub fn style(ctx: &egui::Context) {
+    fonts(ctx);
     ctx.set_theme(egui::Theme::Dark);
     ctx.all_styles_mut(|s| {
         let v = &mut s.visuals;
@@ -214,7 +232,7 @@ pub fn style(ctx: &egui::Context) {
         s.spacing.button_padding = Vec2::new(12.0, 6.0);
         s.spacing.item_spacing = Vec2::new(10.0, 8.0);
         for (_, font) in s.text_styles.iter_mut() {
-            font.size *= 1.1;
+            font.size *= 1.25;
         }
     });
 }

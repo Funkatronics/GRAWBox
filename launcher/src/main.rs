@@ -174,7 +174,7 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.label(RichText::new("TOM CLANCY'S GHOST RECON").size(12.0).color(ACCENT));
-                        ui.label(RichText::new(g.name.to_uppercase()).size(26.0).strong());
+                        ui.label(RichText::new(g.name.to_uppercase()).font(theme::heading(30.0)));
                         ui.label(RichText::new(match ready {
                             Ready::Yes => "Ready",
                             Ready::NoProgram => "The port's program is missing from the programs folder",
