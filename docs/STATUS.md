@@ -83,7 +83,9 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   Tester (e4e9102, real GPU, ultrawide): fully playable in both games. Reticle, target outlines and GRAW 2 intel
   (objectives, ally and enemy highlights, direction arrows) correct; GRAW 2 intel uses the whole wide picture. Stretched
   HUD option works. Left: tac maps stretched in both games (tolerable); GRAW 1 intel markers and arrows stay inside the
-  16:9 area, also with the stretched HUD (fine, not ideal); loading screens stretched.
+  16:9 area, also with the stretched HUD (fine, not ideal); loading screens stretched. GRAW 1's HUD is crisp but too
+  big at 3840x1600 (GRAW 2's lighter design looks right): when the HUD layout is next worked on, look at a HUD scale
+  too, at least for GRAW 1 if it is a reasonable lift (the GUI map in sub_8216EAA0 could scale both axes).
   hud_layout setting (launcher "HUD on wide screens"): centered (default) or stretched.
 - How the camera was found, for GRAW 1 and the distance: a debug probe in the native renderer logs projection-shaped
   VS constants with the draw's guest back chain; the projection is then found in memory, and a hardware write
