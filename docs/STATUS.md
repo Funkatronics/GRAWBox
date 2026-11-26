@@ -22,6 +22,10 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   presents; the `FLICKER-*` test scripts each rule one out.
   Now seen in GRAW 2 too, and it goes away while a capture is taken: timing, not content. GRAW 1's paused frames alternate
   between three kinds (shadow cascades refreshed in turn).
+- **Pause flicker, details (tester):** fast, moving, polygonal flashes, mostly bright green, sometimes blue, against the
+  sky; starts after a few seconds paused (alt-tab is not needed); native only. Not changed by: GPU serialized, one
+  submission per frame, texture capture order off, haze off or original, 720p, general resolves, a vertex copy for
+  every draw, one thread, post off, vsync off. Not seen on WARP (paused GRAW 1 training, 5 captured frames).
 - **Locked at 60 fps** in both games, also with the guest vblank at 120 Hz or 1 kHz (`--gpu.vsync=false`). The games sleep in
   1 to 10 ms steps on worker threads; the busiest untimed wait is at 0x82101798 (GRAW 2), about 60 a second. What it waits
   for is not known yet. `REX_TRACE_WAITS=1` (local SDK change, not committed) logs waits by caller. WARP is too slow to measure.
