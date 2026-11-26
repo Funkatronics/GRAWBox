@@ -9,6 +9,12 @@
 // A wider aspect keeps the vertical field of view and widens the horizontal (the view's own, from
 // its 1280x720 at +618 / +620, is kept at +600 too). The game still draws 1280x720; the native
 // renderer stretches the picture to the aspect when it presents.
+//
+// The GUI (menus and HUD, one widget system) would come out stretched with it. Its pixel-to-clip
+// map is built in sub_8237C410 from 2/1280 and -2/720 and set as c0..c3 by sub_82591FA8; its widgets
+// sit at fixed 1280-wide positions (a wider root does not move them). So the map's row for x is
+// scaled by 16:9 over the aspect about the middle: menus and HUD keep their shapes in a 16:9 area in
+// the centre. World markers are drawn apart from this map and stay on their targets.
 #include "generated/campaign/graw2_campaign_init.h"
 
 #include "native_host.h"
@@ -35,4 +41,29 @@ REX_HOOK_RAW(sub_8232F0D0) {
     }
   }
   __imp__sub_8232F0D0(ctx, base);
+}
+
+namespace {
+void Store32(uint8_t* base, uint32_t address, uint32_t value) {
+  value = __builtin_bswap32(value);
+  std::memcpy(base + address, &value, 4);
+}
+float LoadFloat(const uint8_t* base, uint32_t address) {
+  uint32_t value;
+  std::memcpy(&value, base + address, 4);
+  return std::bit_cast<float>(__builtin_bswap32(value));
+}
+}  // namespace
+
+REX_EXTERN(__imp__sub_82591FA8);
+REX_HOOK_RAW(sub_82591FA8) {
+  // SetVertexShaderConstantF(device, start, data, count) from sub_8237C410: the GUI's map.
+  static const double aspect = grawbox::AspectRatio();
+  if (static_cast<uint32_t>(ctx.lr) == 0x8237C4DC && aspect > 16.0 / 9.0 + 0.01) {
+    const float k = static_cast<float>(16.0 / 9.0 / aspect);
+    const uint32_t c0 = ctx.r5.u32;  // on sub_8237C410's stack
+    Store32(base, c0, std::bit_cast<uint32_t>(LoadFloat(base, c0) * k));
+    Store32(base, c0 + 12, std::bit_cast<uint32_t>(LoadFloat(base, c0 + 12) * k));
+  }
+  __imp__sub_82591FA8(ctx, base);
 }

@@ -63,24 +63,14 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   a 16:9 window, letterboxed). The camera gets the aspect with its vertical field of view kept (camera.cpp, also
   view+600); the game still draws 1280x720 squeezed across, and the native renderer stretches it back when it
   presents (--graw_native_aspect). Culling and the HUD's world markers follow the camera, so they line up.
-  Left: the HUD, menus and text are stretched across (next: squeeze 2D draws back to 16:9 in the native renderer,
-  keeping the world markers where they belong); the picture has only the 16:9 image's pixels across (later: a draw
-  scale per axis, so 21:9 gets its own columns); the emulated renderer shows the squeezed picture (F9 is a test
-  feature); GRAW 1 not done (kTitleWidens false).
-  HUD draws (GRAW 2 gameplay, draw log): quad lists whose VS constants c0..c1 are the pixel-to-clip map
-  (2/1280, 0, 0, -1), (0, -2/720, 0, 1); vertex shaders BC85A0722BC60F1F and 5E86638787777C19, positions 16-bit
-  integer pixels (FMT_16_16_16_16, stride 16). So the renderer can tell them and their extent across, and change c0
-  to squeeze a draw toward the centre or about its own middle. World markers are such draws too, at projected points.
-  Tried (uncommitted, draw.cpp HudSqueeze): each such draw squeezed about its own middle. Gameplay looks right (text,
-  icons, ammo, markers on target; the top band shows a gap), but menu buttons are several draws and come apart.
-  Menus and HUD are one GUI system (widget tree drawn through 826B4900 -> 826B301C -> 826D8C14, both in the front
-  end and in play), so there is no cheap menu/HUD switch. Next: find where that GUI takes its 1280x720 and give it
-  the wider width (1680x720 at 21:9), so it lays out for the wide screen itself; the per-draw squeeze is the fallback.
-  The GUI's pixel-to-clip matrix is built in sub_8237C410 (2/1280 at 0x8202B774, -2/720 at 0x8202B770, an x offset
-  from +380 of the GUI object at *(0x8287EF00)) and set as c0..c3 by sub_82591FA8; then sub_826B57A8 draws the
-  widget trees. Changing that matrix alone gives the centred 16:9 HUD (menus whole, world markers off target).
-  Whether the widgets are placed by anchors (and would follow a wider root) or at fixed 1280-wide positions is
-  not known yet; 1280.0 / 720.0 (0x82000FC8 / FC4) are also read by sub_8231AE90, sub_82350A70 and sub_8238B778.
+  Menus and HUD: the GUI's pixel-to-clip map (sub_8237C410 -> sub_82591FA8, c0..c3) is scaled across by 16:9 over
+  the aspect about the middle (camera.cpp), so menus and HUD keep their shapes in a 16:9 area in the centre (checked
+  on WARP at 21:9, front end and play). World markers are drawn apart from that map and stay on their targets.
+  The GUI's widgets sit at fixed 1280-wide positions: a wider root (+0x20 of the root sub_826B57A8 draws) does not
+  move them, so HUD at the screen edges would need moving widgets one by one (a per-draw squeeze, stashed locally,
+  split menu buttons).
+  Left: the picture has only the 16:9 image's pixels across (later: a draw scale per axis); the emulated renderer
+  shows the squeezed picture (F9 is a test feature); GRAW 1 not done (kTitleWidens false).
 - How the camera was found, for GRAW 1 and the distance: a debug probe in the native renderer logs projection-shaped
   VS constants with the draw's guest back chain; the projection is then found in memory, and a hardware write
   breakpoint (Dr0 on the host address of the guest float, set from a helper thread) gives the writing host address,
