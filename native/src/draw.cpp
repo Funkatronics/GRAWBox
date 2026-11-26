@@ -282,6 +282,9 @@ bool OverlayIs16x9(const DrawState& s, float& k) {
     return aspect > 16.0 / 9.0 + 0.01 ? float(16.0 / 9.0 / aspect) : 1.0f;
   }();
   if (squeeze == 1.0f) return false;
+  // Only into the 1280-wide picture: scenes rendered into textures with their own 16:9 camera
+  // (smaller surfaces) are not stretched by the present and keep their shape.
+  if ((s.regs[XE_GPU_REG_RB_SURFACE_INFO] & 0x3FFF) != 1280) return false;
   const uint32_t* c = &s.regs[XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * 4];
   auto f = [&](uint32_t i) { return std::bit_cast<float>(c[i]); };
   if (f(1) != 0 || f(2) != 0 || f(3) != 0 || f(4) != 0 || f(5) != 0 || f(7) != 0) return false;
