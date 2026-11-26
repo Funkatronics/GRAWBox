@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(rexglue 0.11.0 REQUIRED CONFIG)
 rexglue_project(graw2_campaign OUTPUT_DIR generated/campaign)
 
-add_executable(graw2_campaign WIN32 src/main.cpp src/native_hooks.cpp
+add_executable(graw2_campaign WIN32 src/main.cpp src/native_hooks.cpp src/camera.cpp
                ../common/native_host.cpp)
 target_include_directories(graw2_campaign PRIVATE . ../common ../../native/include)
 rexglue_setup_target(graw2_campaign)

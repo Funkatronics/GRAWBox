@@ -35,6 +35,8 @@ pub struct Settings {
     pub scale: u32,
     pub fullscreen: bool,
     pub vsync: bool,
+    /// Percent of the game's own (GRAW 2).
+    pub field_of_view: u32,
     pub anisotropy: u32,
     pub ambient_occlusion: u32,
     pub sharpness: f32,
@@ -57,6 +59,7 @@ impl Default for Settings {
             scale: 2,
             fullscreen: true,
             vsync: true,
+            field_of_view: 100,
             anisotropy: 16,
             ambient_occlusion: 0,
             sharpness: 0.0,
@@ -115,6 +118,7 @@ impl Settings {
         }
         s.scale = s.scale.clamp(1, 3);
         s.anisotropy = s.anisotropy.clamp(1, 16);
+        s.field_of_view = s.field_of_view.clamp(75, 150);
         s.ambient_occlusion = s.ambient_occlusion.min(100);
         s.haze_variant = s.haze_variant.clamp(1, 6);
         s.sharpness = number(s.sharpness, 0.0, 1.0, 0.0);
@@ -142,6 +146,7 @@ impl Settings {
             format!("--gpu.resolution_scale_x={}", self.scale),
             format!("--gpu.resolution_scale_y={}", self.scale),
             format!("--native.vsync={}", self.vsync),
+            format!("--native.field_of_view={}", self.field_of_view),
             format!("--native.anisotropy={}", self.anisotropy),
             format!("--native.ambient_occlusion={}", self.ambient_occlusion),
             format!("--native.sharpness={}", self.sharpness),

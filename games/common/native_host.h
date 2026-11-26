@@ -36,6 +36,9 @@ class NativeSettings : public rex::SettingOwner {
   REX_SETTING(std::string, prompts, "auto",
               "Button prompts: controller, keyboard, or auto for the keyboard driver's choice",
               rex::Allowed("auto", "controller", "keyboard"), rex::kRestart);
+  REX_SETTING(rex::i32, field_of_view, 100,
+              "Field of view in percent of the game's own (GRAW 2), as the width of the picture",
+              rex::Range{75, 150}, rex::kRestart);
   REX_SETTING(bool, vsync, true, "Wait for the display when the native renderer presents",
               rex::kRestart);
 };

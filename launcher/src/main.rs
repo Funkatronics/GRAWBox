@@ -231,6 +231,9 @@ impl App {
                 });
                 row(ui, "Fullscreen", "", |ui| { ui.checkbox(&mut s.fullscreen, ""); });
                 row(ui, "VSync", "", |ui| { ui.checkbox(&mut s.vsync, ""); });
+                row(ui, "Field of view", "How much of the world you see. 100 % is the game's own. GRAW 2 only for now.", |ui| {
+                    ui.add(egui::Slider::new(&mut s.field_of_view, 75..=150).step_by(5.0).suffix(" %"));
+                });
             });
         });
         let native = s.renderer == "native";

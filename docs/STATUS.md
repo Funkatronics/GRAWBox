@@ -36,7 +36,11 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
 - **GRAW 1: shadow triangles in the air** by some barrels, seen in one run and not again; not on emulated then. Transient.
 - **One GRAW 1 squadmate loses weapon, outline and marker** together. Not frame rate or occlusion queries. graw360 #7.
 - **GRAW 1 world went mostly black** once, late in the first mission, on the emulated renderer. Cause not known.
-- **GRAW 1: dark polygon in the sky** (helicopter scene), on the emulated renderer. Not checked on native.
+- **GRAW 1: dark polygon in the sky** (helicopter scene), moving with the camera. Seen on the emulated renderer, and in
+  v0.1.0 on native too, so probably not a renderer bug.
+- **F9 crashed GRAW 1 once** (v0.1.0, RTX 4090, after about 7 minutes on native): the emulated renderer's D3D12 device was
+  lost 0.1 s after the switch (first error: Map of a new upload buffer). Native presented fine up to the switch. Earlier
+  F9 presses in the same log, a few seconds apart, worked. The removal reason is not logged; log it (and DRED) first.
 - GRAW 1 hitches: need longer and repeated play.
 - Keyboard and mouse: keys 1 and 2 are d-pad left and right (the tester's choice), 3 and 4 up and down, Q weapons, Tab map.
   Wanted: 1, 2 and G going straight to the primary weapon, secondary and grenades, and one key that cycles all Cross-Com
@@ -44,18 +48,25 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   B held and the d-pad scroll the weapons; a tap goes back to the last. There is no sprint.
 - GRAW 1 prompts still showing the pad: X, Y, triggers, BACK, in-text icons.
 - Native renderer: no occlusion queries (a fixed count is reported); Vulkan not brought over; system dialogs not tested.
-- **Field of view and ultrawide** (wanted): the games draw 1280x720 and are pillarboxed on 21:9. The projection is built each
-  frame and kept nowhere but the GPU command buffer (GRAW 2, memory dump in gameplay): vertical field of view 0.8 rad in GRAW 2,
-  0.75 in GRAW 1 (70 degrees across), 16:9. Scaling it in the renderer would break GRAW 2's screen-space shadows, which rebuild
-  positions with the game's matrices, so the camera code has to be found. `<capture dir>\memory.request` dumps guest memory.
-  Scope (2026-11-25): a GRAW 2 gameplay dump holds no 16:9 float and its 286 copies of 0.8 are vertex data, so the
-  camera is found by its code, not its data. Plan, all on WARP (no frame rate needed):
-  1. FOV: log the guest call stack (back-chain, as the wait trace did) when a hooked call writes a projection-shaped
-     VS constant block; read the function in generated/; override where the field of view is loaded (as the GRAW 1 HUD
-     fix overrides 0x821B9164). Then a launcher setting. GRAW 1 and 2 separately.
-  2. Third-person distance: the same trace on the view matrix finds the camera that places the eye behind the player.
-  3. Ultrawide (gameplay): the game's back buffer is 1280x720; wider needs the D3D device made wider, the native
-     renderer at non-720 sizes, and a projection with the wider aspect (from 1). The HUD may stay 16:9. The largest part.
+- **Field of view: done for GRAW 2** (games/graw2-campaign/src/camera.cpp, launcher slider 75 to 150 %, checked on
+  WARP at 130 %). GRAW 2 builds each view's projection in sub_82351AB8 with sub_8232F0D0 from the camera object at
+  view+604: +72 four times the vertical half angle (1.5 to 1.6 in play), +76 near 0.1, +80 far 2100, +88 a 4x4 with
+  rows right, forward, up, position. sub_823CFA98(camera, view+24) makes the view matrix; the view-projection and
+  frustum planes follow from it, so culling matches. The main view object was 0x40280FB0 in every run.
+  GRAW 1: not looked at yet; the same search (below) should find it.
+- **Camera distance** (GRAW 2, wanted): moving the camera back along its forward row inside sub_823CFA98 works
+  (1.5 m on WARP) but goes into walls: at the first mission's start the eye ends inside the low wall behind the player
+  and the lower half of the picture is black. The game's camera controller keeps the eye out of walls, so the distance
+  has to change there. Next: watch the camera position (+88) for the writer (hardware breakpoint, as below) and walk
+  up to the controller's distance.
+- **Ultrawide** (wanted): the games draw 1280x720 and are pillarboxed on 21:9. The aspect comes from the view's size
+  (+618 / +620, stored at +600). Wider needs the D3D device made wider, the native renderer at non-720 sizes, and that
+  aspect. The HUD may stay 16:9. The largest part, not started.
+- How the camera was found, for GRAW 1 and the distance: a debug probe in the native renderer logs projection-shaped
+  VS constants with the draw's guest back chain; the projection is then found in memory, and a hardware write
+  breakpoint (Dr0 on the host address of the guest float, set from a helper thread) gives the writing host address,
+  which kPPCFuncMappings turns into the guest function. memcpy (sub_824B2BC0) shows up as a writer; hook it to get the
+  source. Debug hooks die in pointer walks without VirtualQuery checks. Not committed; rebuild as needed.
 - Not tested: drone and squad feeds beyond the first mission, loading GRAW 1 saves, later missions, returning to the front end.
 
 ## Findings worth keeping
