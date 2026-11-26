@@ -53,7 +53,7 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   view+604: +72 four times the vertical half angle (1.5 to 1.6 in play), +76 near 0.1, +80 far 2100, +88 a 4x4 with
   rows right, forward, up, position. sub_823CFA98(camera, view+24) makes the view matrix; the view-projection and
   frustum planes follow from it, so culling matches. The main view object was 0x40280FB0 in every run.
-  GRAW 1: not looked at yet; the same search (below) should find it.
+  GRAW 1: the same design (sub_8212B298 from sub_82181F58 at 0x82181FEC, camera at view+592, constant 0x8209AE90).
 - **Camera distance** (GRAW 2, wanted): moving the camera back along its forward row inside sub_823CFA98 works
   (1.5 m on WARP) but goes into walls: at the first mission's start the eye ends inside the low wall behind the player
   and the lower half of the picture is black. The game's camera controller keeps the eye out of walls, so the distance
@@ -70,7 +70,10 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   move them, so HUD at the screen edges would need moving widgets one by one (a per-draw squeeze, stashed locally,
   split menu buttons).
   Left: the picture has only the 16:9 image's pixels across (later: a draw scale per axis); the emulated renderer
-  shows the squeezed picture (F9 is a test feature); GRAW 1 not done (kTitleWidens false).
+  shows the squeezed picture (F9 is a test feature); world markers, the aim reticle and target highlights come out
+  stretched across (user report): they need narrowing about their own centres. GRAW 1 done the same way (aspect at
+  view+588; GUI map from sub_8216EAA0 via sub_824C87D0 at 0x8216EB3C; checked on WARP at 21:9); its loading-screen
+  logo is stretched too (another path).
 - How the camera was found, for GRAW 1 and the distance: a debug probe in the native renderer logs projection-shaped
   VS constants with the draw's guest back chain; the projection is then found in memory, and a hardware write
   breakpoint (Dr0 on the host address of the guest float, set from a helper thread) gives the writing host address,

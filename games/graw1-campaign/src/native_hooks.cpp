@@ -6,7 +6,7 @@
 
 #include <rex/ppc/hook.h>
 
-const bool grawbox::kTitleWidens = false;  // the aspect_ratio setting is GRAW 2 only so far
+const bool grawbox::kTitleWidens = true;  // games/graw1-campaign/src/camera.cpp
 
 const GrawboxTitle grawbox::kTitle = {
     .size = sizeof(GrawboxTitle),
