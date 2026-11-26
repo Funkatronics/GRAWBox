@@ -20,6 +20,11 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   tester's log shows the paused game drawing steadily at 60 fps, with the game thread's wait for the renderer dropping
   from 13 ms to under 0.3 ms partway through the pause. Suspects: a race between the threads, the post-processing, the
   presents; the `FLICKER-*` test scripts each rule one out.
+  Now seen in GRAW 2 too, and it goes away while a capture is taken: timing, not content. GRAW 1's paused frames alternate
+  between three kinds (shadow cascades refreshed in turn).
+- **Locked at 60 fps** in both games, also with the guest vblank at 120 Hz or 1 kHz (`--gpu.vsync=false`). The games sleep in
+  1 to 10 ms steps on worker threads; the busiest untimed wait is at 0x82101798 (GRAW 2), about 60 a second. What it waits
+  for is not known yet. `REX_TRACE_WAITS=1` (local SDK change, not committed) logs waits by caller. WARP is too slow to measure.
 - **GRAW 1: shadow triangles in the air** by some barrels, seen in one run and not again; not on emulated then. Transient.
 - **One GRAW 1 squadmate loses weapon, outline and marker** together. Not frame rate or occlusion queries. graw360 #7.
 - **GRAW 1 world went mostly black** once, late in the first mission, on the emulated renderer. Cause not known.

@@ -6,6 +6,7 @@ mod game;
 mod keyboard;
 mod settings;
 mod sha1;
+mod theme;
 
 use eframe::egui::{self, Color32, RichText};
 use game::{Import, Ready, GAMES};
@@ -16,9 +17,7 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::Duration;
 
-const ACCENT: Color32 = Color32::from_rgb(70, 205, 190);
-const PANEL: Color32 = Color32::from_rgb(20, 27, 29);
-const GROUND: Color32 = Color32::from_rgb(13, 18, 20);
+use theme::{panel as card, TEAL as ACCENT};
 
 #[derive(PartialEq, Clone, Copy)]
 enum Tab {
@@ -47,7 +46,7 @@ struct App {
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> App {
-        style(&cc.egui_ctx);
+        theme::style(&cc.egui_ctx);
         let (settings, warning) = Settings::load();
         let ready = GAMES.iter().any(|g| g.ready(&settings) == Ready::Yes);
         App {
@@ -174,8 +173,8 @@ impl App {
             card(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(RichText::new("GHOST RECON").size(12.0).color(ACCENT));
-                        ui.label(RichText::new(g.name).size(24.0).strong());
+                        ui.label(RichText::new("TOM CLANCY'S GHOST RECON").size(12.0).color(ACCENT));
+                        ui.label(RichText::new(g.name.to_uppercase()).size(26.0).strong());
                         ui.label(RichText::new(match ready {
                             Ready::Yes => "Ready",
                             Ready::NoProgram => "The port's program is missing from the programs folder",
@@ -189,16 +188,13 @@ impl App {
                         let free = self.checking.is_none() && self.running.is_none() && self.import.is_none();
                         match ready {
                             Ready::Yes => {
-                                let text = if running { "Running" } else if checking { "Checking" } else { "Play" };
-                                let button = egui::Button::new(RichText::new(text).size(18.0).strong().color(GROUND))
-                                    .fill(ACCENT)
-                                    .min_size(egui::vec2(130.0, 44.0));
-                                if ui.add_enabled(free, button).clicked() {
+                                let text = if running { "RUNNING" } else if checking { "CHECKING" } else { "PLAY" };
+                                if theme::action(ui, text, free).clicked() {
                                     self.play(i);
                                 }
                             }
                             Ready::NoDisc | Ready::NoUpdate => {
-                                if ui.add(egui::Button::new("Set up").min_size(egui::vec2(130.0, 44.0))).clicked() {
+                                if theme::action(ui, "SET UP", true).clicked() {
                                     self.tab = Tab::Files;
                                 }
                             }
@@ -364,27 +360,39 @@ impl eframe::App for App {
         if let Some(p) = dropped {
             self.open(&p);
         }
-        egui::Panel::top("head").frame(egui::Frame::new().fill(PANEL).inner_margin(14.0)).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("GRAWBox").size(22.0).strong().color(ACCENT));
-                ui.add_space(20.0);
-                for (tab, name) in [(Tab::Play, "Play"), (Tab::Graphics, "Graphics"), (Tab::Controls, "Controls"), (Tab::Files, "Game files")] {
-                    ui.selectable_value(&mut self.tab, tab, RichText::new(name).size(16.0));
-                }
-            });
+        let time = ctx.input(|i| i.time);
+        theme::background(ui.painter(), ui.max_rect(), time);
+        ctx.request_repaint_after(Duration::from_millis(50));
+        let titles = [(Tab::Play, "Campaign"), (Tab::Graphics, "Graphics"), (Tab::Controls, "Controls"), (Tab::Files, "Game files")];
+        let title = titles.iter().find(|t| t.0 == self.tab).map_or("", |t| t.1);
+        egui::Panel::top("head").show_separator_line(false).frame(egui::Frame::new().inner_margin(egui::Margin { left: 18, right: 0, top: 10, bottom: 0 })).show(ui, |ui| {
+            theme::header(ui, title);
         });
-        if let Some((good, text)) = self.message.clone() {
-            egui::Panel::bottom("message").frame(egui::Frame::new().fill(PANEL).inner_margin(10.0)).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Close").clicked() {
-                        self.message = None;
-                    }
-                    let color = if good { ACCENT } else { Color32::from_rgb(255, 150, 110) };
-                    ui.add(egui::Label::new(RichText::new(text).color(color)).wrap());
+        egui::Panel::bottom("foot").show_separator_line(false).frame(egui::Frame::new()).show(ui, |ui| {
+            if let Some((good, text)) = self.message.clone() {
+                egui::Frame::new().inner_margin(egui::Margin::symmetric(24, 8)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Close").clicked() {
+                            self.message = None;
+                        }
+                        let color = if good { ACCENT } else { Color32::from_rgb(255, 150, 110) };
+                        ui.add(egui::Label::new(RichText::new(text).color(color)).wrap());
+                    });
                 });
-            });
-        }
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(GROUND).inner_margin(16.0)).show(ui, |ui| {
+            }
+            theme::footer(ui, &[("F9", "Switch renderer in game"), ("ESC", "Pause in game")]);
+        });
+        egui::Panel::left("menu").show_separator_line(false).resizable(false).exact_size(230.0).frame(egui::Frame::new().inner_margin(egui::Margin { left: 26, right: 10, top: 26, bottom: 0 })).show(ui, |ui| {
+            for (tab, name) in titles {
+                if theme::menu_item(ui, name, self.tab == tab, 194.0).clicked() {
+                    self.tab = tab;
+                }
+                ui.add_space(4.0);
+            }
+            ui.add_space(18.0);
+            ui.label(RichText::new("GRAWBox").size(13.0).color(theme::TEAL_DIM));
+        });
+        egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin { left: 6, right: 26, top: 22, bottom: 10 })).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 if self.tab != Tab::Controls {
                     self.capture = None;
@@ -400,14 +408,6 @@ impl eframe::App for App {
     }
 }
 
-fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new().fill(PANEL).corner_radius(8.0).inner_margin(16.0).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        add(ui);
-    });
-    ui.add_space(10.0);
-}
-
 fn grid(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui)) {
     egui::Grid::new(id).num_columns(2).spacing([28.0, 10.0]).min_col_width(170.0).show(ui, add);
 }
@@ -417,7 +417,7 @@ fn row(ui: &mut egui::Ui, name: &str, hint: &str, add: impl FnOnce(&mut egui::Ui
     if !hint.is_empty() {
         label.on_hover_text(hint);
     }
-    ui.horizontal(add);
+    ui.horizontal_wrapped(add);
     ui.end_row();
 }
 
@@ -435,24 +435,11 @@ fn pick(ui: &mut egui::Ui, value: &mut u32, options: &[(u32, &str)]) {
     }
 }
 
-fn style(ctx: &egui::Context) {
-    ctx.set_theme(egui::Theme::Dark);
-    ctx.all_styles_mut(|s| {
-        s.visuals.selection.bg_fill = Color32::from_rgb(25, 95, 90);
-        s.visuals.panel_fill = GROUND;
-        s.visuals.override_text_color = Some(Color32::from_rgb(222, 232, 230));
-        s.spacing.button_padding = egui::vec2(12.0, 6.0);
-        for (_, font) in s.text_styles.iter_mut() {
-            font.size *= 1.12;
-        }
-    });
-}
-
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("GRAWBox")
-            .with_inner_size([860.0, 640.0])
+            .with_inner_size([1040.0, 680.0])
             .with_min_inner_size([640.0, 420.0])
             .with_drag_and_drop(true),
         ..Default::default()
