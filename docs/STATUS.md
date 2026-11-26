@@ -26,6 +26,9 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   sky; starts after a few seconds paused (alt-tab is not needed); native only. Not changed by: GPU serialized, one
   submission per frame, texture capture order off, haze off or original, 720p, general resolves, a vertex copy for
   every draw, one thread, post off, vsync off. Not seen on WARP (paused GRAW 1 training, 5 captured frames).
+  A phone video (GRAW 1 training street, paused) shows single-frame vertex explosions from the screen centre: a
+  yellow-green beam into the sky, a magenta polygon over the horizon. Not changed by hashing whole shaders (e48f150).
+  GRAW 1 issues no LOAD_ALU_CONSTANT there. Parked until it can be tested at full speed on more systems.
 - **Locked at 60 fps** in both games, also with the guest vblank at 120 Hz or 1 kHz (`--gpu.vsync=false`). The games sleep in
   1 to 10 ms steps on worker threads; the busiest untimed wait is at 0x82101798 (GRAW 2), about 60 a second. What it waits
   for is not known yet. `REX_TRACE_WAITS=1` (local SDK change, not committed) logs waits by caller. WARP is too slow to measure.
