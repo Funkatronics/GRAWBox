@@ -6,6 +6,8 @@
 
 #include <rex/ppc/hook.h>
 
+const bool grawbox::kTitleWidens = true;  // games/graw1-campaign/src/camera.cpp
+
 const GrawboxTitle grawbox::kTitle = {
     .size = sizeof(GrawboxTitle),
     .push = 0,

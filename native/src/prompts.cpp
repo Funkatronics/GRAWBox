@@ -9,6 +9,8 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -100,8 +102,8 @@ constexpr Cell kGraw1Hud[] = {
     {"left_stick", 34, 66, 28, 28, 35, 67, 26, 26},
     {"right_stick_press", 0, 97, 32, 31, 1, 100, 30, 26},
 };
-constexpr Cell kWholeA[] = {{"a", 0, 0, 32, 32, 1, 1, 28, 28}};
-constexpr Cell kWholeB[] = {{"b", 0, 0, 32, 32, 1, 1, 28, 28}};
+constexpr Cell kWholeA[] = {{"menu_a", 0, 0, 32, 32, 1, 1, 28, 28}};
+constexpr Cell kWholeB[] = {{"menu_b", 0, 0, 32, 32, 1, 1, 28, 28}};
 
 // Entries with hash 0 only make textures of that size show up in the log.
 constexpr Sheet kSheets[] = {
@@ -325,7 +327,7 @@ void ApplyPrompts(const TextureKey& key, const uint8_t* guest, size_t guest_byte
       std::fclose(file);
     }
   }
-  if (REXCVAR_GET(graw_native_prompts).empty() || !guest || base.level) return;
+  if (!PromptsShown() || !guest || base.level) return;
   bool candidate = false;
   for (const Sheet& s : kSheets)
     candidate |= s.format == key.format && s.width == key.width && s.height == key.height;
@@ -346,6 +348,170 @@ void ApplyPrompts(const TextureKey& key, const uint8_t* guest, size_t guest_byte
   if (logged.size() < 400 && logged.insert(hash).second)
     REXLOG_INFO("GRAW native prompts: unknown {}x{} format {} at {:08X}: {:016X}", key.width,
                 key.height, uint32_t(key.format), key.base_page << 12, hash);
+}
+
+namespace {
+std::atomic<bool> g_keyboard_last{true};
+
+// XInputGetState, loaded on first use (no import of a particular XInput version).
+using XInputGetStateFn = DWORD(WINAPI*)(DWORD, void*);
+XInputGetStateFn XInputGetState() {
+  static const XInputGetStateFn fn = [] {
+    for (const wchar_t* name : {L"xinput1_4.dll", L"xinput9_1_0.dll"})
+      if (HMODULE m = LoadLibraryW(name))
+        return reinterpret_cast<XInputGetStateFn>(GetProcAddress(m, "XInputGetState"));
+    return XInputGetStateFn(nullptr);
+  }();
+  return fn;
+}
+
+// A controller used since the last call: its state changed in a way a person makes (a button or
+// trigger, or a stick moved well off its centre), not the small drift of a resting stick.
+// `changed`: any change at all, the small ones included.
+bool PadUsed(bool* changed) {
+  *changed = false;
+  const XInputGetStateFn get = XInputGetState();
+  if (!get) return false;
+  struct State {
+    DWORD packet;
+    WORD buttons;
+    BYTE lt, rt;
+    SHORT lx, ly, rx, ry;
+  };
+  static State last[4] = {};
+  bool used = false;
+  for (DWORD i = 0; i < 4; ++i) {
+    State s;
+    if (get(i, &s) != ERROR_SUCCESS || s.packet == last[i].packet) continue;
+    *changed = true;
+    const State& o = last[i];
+    auto moved = [](int a, int b, int by) { return std::abs(a - b) > by; };
+    auto off = [](SHORT v) { return v > 12000 || v < -12000; };
+    if (s.buttons != o.buttons || moved(s.lt, o.lt, 40) || moved(s.rt, o.rt, 40) ||
+        ((off(s.lx) || off(s.ly) || off(s.rx) || off(s.ry)) &&
+         (moved(s.lx, o.lx, 4000) || moved(s.ly, o.ly, 4000) || moved(s.rx, o.rx, 4000) ||
+          moved(s.ry, o.ry, 4000))))
+      used = true;
+    last[i] = s;
+  }
+  return used;
+}
+
+// A key or mouse button pressed since the last call.
+bool KeyPressed() {
+  static bool down[256] = {};
+  bool pressed = false;
+  for (int k = 1; k < 256; ++k) {
+    if (k >= 0xC3 && k <= 0xDA) continue;  // VK_GAMEPAD_*: Windows can report a controller as keys
+    const bool now = (GetAsyncKeyState(k) & 0x8000) != 0;
+    if (now && !down[k]) pressed = true;
+    down[k] = now;
+  }
+  return pressed;
+}
+}  // namespace
+
+bool PromptSheet(const TextureKey& key) {
+  if (REXCVAR_GET(graw_native_prompts).empty()) return false;
+  for (const Sheet& s : kSheets)
+    if (s.format == key.format && s.width == key.width && s.height == key.height) return true;
+  return false;
+}
+
+bool PromptsShown() {
+  if (Labels().empty()) return false;
+  return !Labels().count("@auto") || g_keyboard_last.load(std::memory_order_relaxed);
+}
+
+bool PollPromptDevice() {
+  if (!Labels().count("@auto")) return false;
+  // The last device used wins. A controller also counts as input to Windows (GetLastInputInfo):
+  // that is mouse motion only while the controller's state did not change in the last half second.
+  static DWORD last_input = 0;
+  static ULONGLONG pad_at = 0;
+  const ULONGLONG now = GetTickCount64();
+  bool pad_changed = false;
+  const bool pad = PadUsed(&pad_changed);
+  if (pad_changed) pad_at = now;
+  LASTINPUTINFO info = {sizeof(info)};
+  const bool any = GetLastInputInfo(&info) && last_input && info.dwTime != last_input;
+  last_input = info.dwTime;
+  const bool keys = KeyPressed() || (any && !pad && now - pad_at > 500);
+  const bool before = g_keyboard_last.load(std::memory_order_relaxed);
+  const bool keyboard = pad ? false : keys ? true : before;
+  if (keyboard == before) return false;
+  g_keyboard_last.store(keyboard, std::memory_order_relaxed);
+  REXLOG_INFO("GRAW native prompts: {}", keyboard ? "keys" : "controller buttons");
+  return true;
+}
+
+bool PromptSize(const TextureKey& key) {
+  if (REXCVAR_GET(graw_native_prompts).empty() || key.mip_levels() != 1 || key.width > 128 ||
+      key.format != xenos::TextureFormat::k_DXT2_3)
+    return false;
+  for (const Sheet& s : kSheets)
+    if (s.format == key.format && s.width == key.width && s.height == key.height) return true;
+  return false;
+}
+
+bool BuildPrompts(const TextureKey& key, const GuestTextureMemory& memory, size_t bytes,
+                  std::vector<uint8_t>* rgba) {
+  if (!memory.base || !PromptsShown()) return false;
+  const uint64_t hash = XXH3_64bits(memory.base, bytes);
+  const Sheet* sheet = nullptr;
+  for (const Sheet& s : kSheets)
+    if (s.hash == hash && s.width == key.width && s.height == key.height) sheet = &s;
+  if (!sheet) return false;
+  std::vector<HostSubresource> subresources;
+  std::vector<uint8_t> blocks(size_t(GetHostFootprints(key, true, &subresources))), scratch;
+  if (subresources.empty() || !UntileTexture(key, memory, subresources, blocks.data(), &scratch))
+    return false;
+  const HostSubresource& base = subresources[0];
+  const int w = int(key.width), h = int(key.height), n = int(kPromptScale);
+  std::vector<Pixel> small_picture(size_t(w) * h);
+  for (int y = 0; y < h; y += 4)
+    for (int x = 0; x < w; x += 4) {
+      const Dxt3Block block(blocks.data() + base.offset + size_t(y / 4) * base.row_pitch +
+                            size_t(x / 4) * 16);
+      for (int i = 0; i < 16; ++i)
+        if (x + i % 4 < w && y + i / 4 < h)
+          small_picture[size_t(y + i / 4) * w + x + i % 4] = block.pixels[i];
+    }
+  // Enlarged as the sampler would.
+  rgba->resize(size_t(w) * n * h * n * 4);
+  for (int y = 0; y < h * n; ++y)
+    for (int x = 0; x < w * n; ++x) {
+      const float fx = std::clamp((x + 0.5f) / n - 0.5f, 0.0f, float(w - 1));
+      const float fy = std::clamp((y + 0.5f) / n - 0.5f, 0.0f, float(h - 1));
+      const int x0 = int(fx), y0 = int(fy);
+      const int x1 = std::min(x0 + 1, w - 1), y1 = std::min(y0 + 1, h - 1);
+      const float tx = fx - x0, ty = fy - y0;
+      const Pixel a = small_picture[size_t(y0) * w + x0], b = small_picture[size_t(y0) * w + x1];
+      const Pixel c = small_picture[size_t(y1) * w + x0], d = small_picture[size_t(y1) * w + x1];
+      auto mix = [&](uint8_t Pixel::*m) {
+        const float top = a.*m * (1 - tx) + b.*m * tx, low = c.*m * (1 - tx) + d.*m * tx;
+        return uint8_t(top * (1 - ty) + low * ty + 0.5f);
+      };
+      uint8_t* out = rgba->data() + (size_t(y) * w * n + x) * 4;
+      out[0] = mix(&Pixel::r);
+      out[1] = mix(&Pixel::g);
+      out[2] = mix(&Pixel::b);
+      out[3] = mix(&Pixel::a);
+    }
+  Sheet large = *sheet;
+  large.format = xenos::TextureFormat::k_8_8_8_8;
+  large.width *= kPromptScale;
+  large.height *= kPromptScale;
+  HostSubresource rows = {};
+  rows.row_pitch = large.width * 4;
+  for (Cell c : sheet->cells) {
+    for (int16_t* v : {&c.clear_x, &c.clear_y, &c.clear_w, &c.clear_h, &c.x, &c.y, &c.w, &c.h})
+      *v = int16_t(*v * n);
+    DrawCell(large, c, rgba->data(), rows);
+  }
+  REXLOG_INFO("GRAW native prompts: {}x{} {:016X} replaced at {}x{}", key.width, key.height, hash,
+              large.width, large.height);
+  return true;
 }
 
 }  // namespace graw::native

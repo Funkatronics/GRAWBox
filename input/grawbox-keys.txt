@@ -1,6 +1,7 @@
 # Keys for --hid.drivers=keyboard. Uncomment and change; names: A-Z 0-9 F1-F24 SPACE ENTER ESC TAB
 # BACKSPACE LSHIFT RSHIFT LCTRL RCTRL LALT RALT CAPS UP DOWN LEFT RIGHT INSERT DELETE HOME END PAGEUP
-# PAGEDOWN MOUSE1 (left) MOUSE2 (right) MOUSE3 (middle) MOUSE4 MOUSE5. Several keys may share a control.
+# PAGEDOWN WHEELUP WHEELDOWN MOUSE1 (left) MOUSE2 (right) MOUSE3 (middle) MOUSE4 MOUSE5. Several keys
+# may share a control. grawbox-keys-classic.txt is the first scheme: copy it over this file to use it.
 #
 # mouse_sensitivity = 1.0
 # mouse_deadzone = 0.24
@@ -12,16 +13,16 @@
 # right_trigger = MOUSE1
 # left_trigger = MOUSE2
 # right_stick_press = MOUSE3 Z
-# left_stick_press = LSHIFT
-# left_bumper = Q
+# left_stick_press = C LCTRL
+# left_bumper = T
 # right_bumper = F
-# a = SPACE ENTER
-# b = C BACKSPACE
-# x = R
-# y = E
-# dpad_up = UP 1
-# dpad_down = DOWN 2
-# dpad_left = LEFT 3
-# dpad_right = RIGHT 4
+# a = R ENTER
+# b = Q BACKSPACE
+# x = V N
+# y = E SPACE
+# dpad_up = 3 WHEELUP UP
+# dpad_down = 4 WHEELDOWN DOWN
+# dpad_left = 1 LEFT
+# dpad_right = 2 RIGHT
 # start = ESC
 # back = TAB M

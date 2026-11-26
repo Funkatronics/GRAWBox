@@ -177,6 +177,9 @@ class D3D12Device {
   uint32_t back_index_ = 0;
   UINT swapchain_flags_ = 0;  // DXGI_SWAP_CHAIN_FLAG_*: creation and every ResizeBuffers
   bool tearing_ = false;
+  // Without vsync, frames are replaced rather than torn (as ReXGlue's presenter does), unless
+  // --graw_native_allow_tearing.
+  bool allow_tearing_ = false;
   bool vsync_ = false;
   bool hdr_ = false;
   float hdr_peak_nits_ = 0.0f;

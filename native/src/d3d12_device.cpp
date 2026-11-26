@@ -8,6 +8,9 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+REXCVAR_DEFINE_BOOL(graw_native_allow_tearing, false, "GRAW native",
+                    "Without vsync, present with tearing (false: the newest frame replaces the waiting one)");
+
 #include <simde/x86/sse.h>
 
 #include <algorithm>
@@ -201,6 +204,7 @@ bool D3D12Device::Initialize(uint32_t width, uint32_t height, const wchar_t* tit
   BOOL tearing = FALSE;
   factory_->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &tearing, sizeof(tearing));
   tearing_ = tearing != FALSE;
+  allow_tearing_ = REXCVAR_GET(graw_native_allow_tearing);
   swapchain_flags_ = (tearing_ ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0) |
                      (latency_waitable_ ? DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT : 0);
   D3D12_DESCRIPTOR_HEAP_DESC hd = {};
@@ -406,7 +410,7 @@ bool D3D12Device::EndFrame(bool present, std::span<ID3D12CommandList* const> fir
   const bool shown = swapchain_ && present;
   HRESULT hr = !shown   ? S_OK
                : vsync_ ? swapchain_->Present(1, 0)
-                        : swapchain_->Present(0, tearing_ ? DXGI_PRESENT_ALLOW_TEARING : 0);
+                        : swapchain_->Present(0, tearing_ && allow_tearing_ ? DXGI_PRESENT_ALLOW_TEARING : 0);
   end_frame_times_.submit_ns = t1 - t0;
   end_frame_times_.present_ns = NowNs() - t1;
   if (Failed(hr, "Present")) {

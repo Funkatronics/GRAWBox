@@ -91,6 +91,7 @@ REXCVAR_DEFINE_INT32(graw_native_draw_log_frames, 1, "GRAW native",
                      "bit 16) covers");
 REXCVAR_DECLARE(int32_t, graw_native_anisotropy);  // native_cvars.cpp, both backends
 REXCVAR_DECLARE(double, graw_native_mip_bias);
+REXCVAR_DECLARE(double, graw_native_aspect);  // native_cvars.cpp
 REXCVAR_DECLARE(std::string, graw_native_capture_dir);
 namespace rex::graphics {
 extern bool g_dxbc_implicit_gradients;  // dxbc_translator_fetch.cpp (local SDK experiment)
@@ -270,6 +271,28 @@ struct CachedCbv {
 // `cb.last`, compared with what was there on the way (one register = 16 bytes = one SSE
 // load/store, no calls); 16 zero bytes for no shader or no constants (a CBV needs some data).
 // The games' distance haze: the final picture's mix with its blurred and displaced copies.
+// Ultrawide (--graw_native_aspect): the game draws a wider picture into 1280x720 and the present
+// stretches it back across. GRAW 2's world draws carry their projection in c4..c7, x scale in c4.x
+// and y scale in c5.z, so c5.z / c4.x is the picture's aspect (the main camera's is the wide one).
+// Overlays the game draws with its own fixed 16:9 projection (the aim reticle) would come out
+// stretched: their x row is scaled by 16:9 over the aspect, `k`.
+bool OverlayIs16x9(const DrawState& s, float& k) {
+  const float squeeze = [] {
+    const double aspect = REXCVAR_GET(graw_native_aspect);
+    return aspect > 16.0 / 9.0 + 0.01 ? float(16.0 / 9.0 / aspect) : 1.0f;
+  }();
+  if (squeeze == 1.0f) return false;
+  // Only into the 1280-wide picture: scenes rendered into textures with their own 16:9 camera
+  // (smaller surfaces) are not stretched by the present and keep their shape.
+  if ((s.regs[XE_GPU_REG_RB_SURFACE_INFO] & 0x3FFF) != 1280) return false;
+  const uint32_t* c = &s.regs[XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * 4];
+  auto f = [&](uint32_t i) { return std::bit_cast<float>(c[i]); };
+  if (f(1) != 0 || f(2) != 0 || f(3) != 0 || f(4) != 0 || f(5) != 0 || f(7) != 0) return false;
+  if (!(f(0) > 0) || !(f(6) > 0) || std::fabs(f(6) / f(0) - 16.0f / 9.0f) > 1e-3f) return false;
+  k = squeeze;
+  return true;
+}
+
 bool IsHazeShader(uint64_t ucode_hash) {
   return ucode_hash == 0xCFC1BD3557C8B735ull ||  // GRAW 1
          ucode_hash == 0xF17045F9B4E36E54ull;   // GRAW 2
@@ -508,13 +531,13 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   // made from, so a different shader loaded at the same address with the same size misses.
   // A race binds a few hundred shaders a frame.
   struct ShaderMemo {
-    static constexpr uint32_t kBits = 8, kEntries = 1u << kBits, kSample = 16;
+    static constexpr uint32_t kBits = 8, kEntries = 1u << kBits;
     static uint32_t Slot(const ShaderRef& ref) {
       return ((ref.ucode ^ (ref.dwords << 16)) * 0x9E3779B1u) >> (32 - kBits);  // Fibonacci
     }
     uint32_t ucode = 0, dwords = 0, immediate_seq = 0;
     uint64_t binding = 0;
-    uint32_t sample[kSample] = {};
+    uint64_t hash = 0;  // XXH3 of the whole ucode: games rewrite shaders in place
     DxbcShader* shader = nullptr;
   };
   ShaderMemo vs_memo[ShaderMemo::kEntries], ps_memo[ShaderMemo::kEntries];
@@ -1659,10 +1682,6 @@ DrawRenderer::Impl::FanIndices DrawRenderer::Impl::UploadFanIndices(const DrawSt
 DxbcShader* DrawRenderer::Impl::LoadShader(ShaderMemo* table, ShaderMemo*& last,
                                            const ShaderRef& ref, xenos::ShaderType type) {
   if (!ref.ucode || !ref.dwords) return nullptr;
-  // The previous draw's shader again (most draws): no guest memory read, as before the table.
-  if (last && last->shader && last->ucode == ref.ucode && last->dwords == ref.dwords &&
-      last->immediate_seq == ref.immediate_seq && last->binding == ref.binding)
-    return last->shader;
   // A ucode past the 512 MB of physical memory (an address the tracker didn't mask) isn't read.
   if (!ref.immediate && uint64_t(ref.ucode) + uint64_t(ref.dwords) * 4 > 0x20000000u) {
     GRAW_WARN_ONCE("GRAW native draw: shader ucode {:08X} ({} dwords) outside physical memory",
@@ -1672,16 +1691,18 @@ DxbcShader* DrawRenderer::Impl::LoadShader(ShaderMemo* table, ShaderMemo*& last,
   // Declaration-patched vertex shaders (IM_LOAD_IMMEDIATE) come from the tracker's copy.
   const uint32_t* ucode =
       ref.immediate ? ref.immediate : reinterpret_cast<const uint32_t*>(membase + ref.ucode);
-  uint32_t sample[ShaderMemo::kSample];
-  for (uint32_t i = 0; i < ShaderMemo::kSample / 2; ++i) {
-    sample[i] = ucode[std::min(i, ref.dwords - 1)];
-    sample[ShaderMemo::kSample / 2 + i] = ucode[ref.dwords - 1 - std::min(i, ref.dwords - 1)];
-  }
+  // The whole ucode, every draw (about 0.1 us for 300 dwords): a shader the game rewrote in place
+  // with the same first and last dwords was once drawn with its old translation.
+  const uint64_t hash = XXH3_64bits(ucode, size_t(ref.dwords) * 4);
+  if (last && last->shader && last->ucode == ref.ucode && last->dwords == ref.dwords &&
+      last->immediate_seq == ref.immediate_seq && last->binding == ref.binding &&
+      last->hash == hash)
+    return last->shader;
   ShaderMemo& memo = table[ShaderMemo::Slot(ref)];
   last = &memo;
   if (memo.shader && memo.ucode == ref.ucode && memo.dwords == ref.dwords &&
       memo.immediate_seq == ref.immediate_seq &&
-      std::memcmp(memo.sample, sample, sizeof(sample)) == 0) {
+      memo.hash == hash) {
     if (memo.binding == ref.binding) return memo.shader;
     GRAW_LOG_FIRST(
         8, INFO, "GRAW native draw: vertex shader {:08X} ({} dwords) rebound in place at frame {}",
@@ -1691,7 +1712,7 @@ DxbcShader* DrawRenderer::Impl::LoadShader(ShaderMemo* table, ShaderMemo*& last,
   memo.dwords = ref.dwords;
   memo.immediate_seq = ref.immediate_seq;
   memo.binding = ref.binding;
-  std::memcpy(memo.sample, sample, sizeof(sample));
+  memo.hash = hash;
   PrepareDiag& pd = PrepDiag();
   ++pd.shader_loads;
   if (ref.immediate) ++pd.shader_loads_immediate;
@@ -2716,6 +2737,13 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
     *range = old_range;
     shift[0] = old_shift[0];
     shift[1] = old_shift[1];
+  } else if (float k; OverlayIs16x9(s, k)) {
+    uint32_t* const row = const_cast<uint32_t*>(&s.regs[XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * 4]);
+    const uint32_t old = row[0];
+    row[0] = std::bit_cast<uint32_t>(std::bit_cast<float>(old) * k);
+    PackFloats(cb_float_vs, vs, s.regs, XE_GPU_REG_SHADER_CONSTANT_000_X);
+    row[0] = old;
+    PackFloats(cb_float_ps, ps, s.regs, XE_GPU_REG_SHADER_CONSTANT_256_X);
   } else {
     PackFloats(cb_float_vs, vs, s.regs, XE_GPU_REG_SHADER_CONSTANT_000_X);
     PackFloats(cb_float_ps, ps, s.regs, XE_GPU_REG_SHADER_CONSTANT_256_X);

@@ -1,0 +1,49 @@
+﻿# Builds and tests the launcher. Releases are made with tools/release.ps1 (docs/RELEASING.md): they need the
+# game programs, which CI cannot build.
+name: launcher
+
+on:
+  push:
+    branches: ["**"]
+    paths: ["launcher/**", "input/keys.h", ".github/workflows/launcher.yml"]
+  pull_request:
+    paths: ["launcher/**", "input/keys.h", ".github/workflows/launcher.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            launcher/target
+          key: launcher-${{ hashFiles('launcher/Cargo.lock') }}
+      - name: Font
+        shell: pwsh
+        run: ./launcher/fetch_fonts.ps1
+      - name: Test
+        working-directory: launcher
+        run: cargo test --release --locked
+      - name: Build
+        working-directory: launcher
+        run: cargo build --release --locked
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = 'dev'
+          New-Item -ItemType Directory dist/GRAWBox | Out-Null
+          Copy-Item launcher/target/release/GRAWBox.exe, LICENSE, README.md dist/GRAWBox/
+          Copy-Item launcher/fonts/OFL.txt dist/GRAWBox/OFL-Rajdhani.txt
+          Compress-Archive dist/GRAWBox "dist/GRAWBox-$name-windows-x64.zip"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: GRAWBox-windows-x64
+          path: dist/*.zip
+

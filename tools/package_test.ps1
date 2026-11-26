@@ -1,4 +1,4 @@
-# Makes a private add-on folder for real-GPU tests of the native renderer. Copied over an existing test
+﻿# Makes a private add-on folder for real-GPU tests of the native renderer. Copied over an existing test
 # folder it only adds files: bin-native\ and PLAY-NATIVE-*.bat. Programs hold translated game code:
 # the output folder must stay untracked and is not for sharing.
 #   tools/package_test.ps1 -Game graw1|graw2 -Out <folder> -Runtime <folder with the C++ runtime DLLs>
@@ -24,7 +24,7 @@ if ($Runtime) {
     Get-ChildItem $Runtime -File | Where-Object { $_.Name -match '^(msvcp|vcruntime|concrt|vccorlib)' } |
         Copy-Item -Destination $bin
 }
-Copy-Item (Join-Path $root 'input\grawbox-keys.txt') $bin
+Copy-Item (Join-Path $root 'input\grawbox-keys*.txt') $bin
 foreach ($needed in "${Game}_campaign.exe", 'grawbox_native.dll', 'rexgpu-xenos-d3d12.dll') {
     if (-not (Test-Path (Join-Path $bin $needed))) { throw "$needed is missing from $release" }
 }
@@ -37,15 +37,26 @@ $scripts = @(
     @('NATIVE-4K-AO', 'native', 3, '--native.ambient_occlusion=80'),
     @('NATIVE-4K-AO-SHARP', 'native', 3, '--native.ambient_occlusion=80 --native.sharpness=0.5'),
     @('NATIVE-4K-HAZE-TUNING', 'native', 3, '--native.haze_tuning=true --native.ambient_occlusion=80 --native.sharpness=0.5'),
+    @('CAPTURE-F12', 'native', 3, '', 'set GRAWBOX_NATIVE_CAPTURE_DIR=%~dp0captures& set GRAWBOX_NATIVE_CAPTURE_XENOS=false& set GRAWBOX_NATIVE_CAPTURE_BURST=6& set GRAWBOX_NATIVE_MARK_AUDIT=3& if not exist captures mkdir captures'),
     @('NATIVE-4K-ORIGINAL-HAZE', 'native', 3, '--native.haze=original'),
     @('EMULATED-THEN-F9', 'emulated', 3, ''),
     @('NATIVE-4K-KEYBOARD', 'native', 3, '--hid.drivers=keyboard,sdl3 --hid.shared_pads=true')
+)
+# Field of view and aspect ratio (games/*/src/camera.cpp).
+$scripts += @(
+    @('NATIVE-4K-FOV-130', 'native', 3, '--native.field_of_view=130'),
+    @('NATIVE-4K-FOV-85', 'native', 3, '--native.field_of_view=85'),
+    @('NATIVE-4K-WIDE-DISPLAY', 'native', 3, '--native.aspect_ratio=display'),
+    @('NATIVE-4K-WIDE-21x9', 'native', 3, '--native.aspect_ratio=21:9'),
+    @('NATIVE-4K-WIDE-DISPLAY-HUD-STRETCHED', 'native', 3, '--native.aspect_ratio=display --native.hud_layout=stretched'),
+    @('NATIVE-4K-WIDE-DISPLAY-FOV-115', 'native', 3, '--native.aspect_ratio=display --native.field_of_view=115')
 )
 foreach ($s in $scripts) {
     $lines = @(
         '@echo off', 'cd /d "%~dp0"',
         "if not exist `"game\$update`" (", "  echo Game files with the title update are missing from the `"game`" folder.",
         '  pause', '  exit /b 1', ')',
+        "$($s[4])",
         ("start `"`" `"bin-native\${Game}_campaign.exe`" `"--title.game_root=%~dp0game`" " +
             "--title.entry=$entry `"--app.user_root=%~dp0user`" `"--app.cache_root=%~dp0cache-native`" " +
             "`"--log.file_name=%~dp0native.log`" --gpu.driver=d3d12 $(if ($s[3] -notmatch 'hid.drivers') { '--hid.drivers=sdl3,xinput ' })--kernel.headless=true " +

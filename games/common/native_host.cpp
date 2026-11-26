@@ -22,6 +22,30 @@
 REX_EXTERN(__imp__XamIsUIActive);
 
 namespace grawbox {
+
+double AspectRatio() {
+  static const double aspect = [] {
+    // Only the native renderer stretches the wider picture back out when it presents; the emulated
+    // one would show it squashed. F9 to the emulated renderer mid-game still does (a test feature).
+    const bool widens = kTitleWidens && Settings().renderer.Get() == "native";
+    const std::string a = widens ? Settings().aspect_ratio.Get() : "16:9";
+    if (a == "21:9") return 21.0 / 9.0;
+    if (a == "32:9") return 32.0 / 9.0;
+    if (a == "display") {
+      const int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
+      // Narrower than 16:9 keeps the games' 16:9, with bars above and below.
+      if (w > 0 && h > 0 && double(w) / h > 16.0 / 9.0 + 0.01) return double(w) / h;
+    }
+    return 16.0 / 9.0;
+  }();
+  return aspect;
+}
+
+bool HudCentered() {
+  static const bool centered = Settings().hud_layout.Get() != "stretched";
+  return centered;
+}
+
 namespace {
 
 constexpr uint32_t kSwap = 10;  // native/src/graw_d3d.h
@@ -115,7 +139,9 @@ const char* Option(const char* name) {
     return (values[n] = std::to_string(Settings().mip_bias.Get())).c_str();
   if (n == "native_prompts") {
     std::string prompts = Settings().prompts.Get();
-    if (prompts == "auto") {
+    // Automatic: the keys while the keyboard and mouse were used last, with the keyboard driver.
+    const bool automatic = prompts == "auto";
+    if (automatic) {
       auto drivers = REX_SETTINGS().Find("hid.drivers");
       prompts = drivers && (*drivers)->GetText().find("keyboard") != std::string::npos
                     ? "keyboard" : "controller";
@@ -124,9 +150,12 @@ const char* Option(const char* name) {
     wchar_t path[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     return (values[n] = keys::PromptLabels(keys::Load(
-                std::filesystem::path(path).parent_path() / "grawbox-keys.txt")))
+                std::filesystem::path(path).parent_path() / "grawbox-keys.txt")) +
+                        (automatic ? "@auto=1;" : ""))
         .c_str();
   }
+  if (n == "native_aspect")
+    return (values[n] = std::to_string(AspectRatio())).c_str();
   if (n == "native_resolution_scale")
     return (values[n] = std::to_string(Settings().resolution_scale.Get())).c_str();
   return nullptr;

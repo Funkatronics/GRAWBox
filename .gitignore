@@ -48,3 +48,6 @@ __pycache__/
 # Local only
 CLAUDE.local.md
 .claude/
+
+# Downloaded by launcher/fetch_fonts.ps1
+launcher/fonts/

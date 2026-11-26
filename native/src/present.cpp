@@ -30,6 +30,7 @@
 #include <vector>
 
 REXCVAR_DECLARE(bool, graw_native_luma_probe);
+REXCVAR_DECLARE(double, graw_native_aspect);
 REXCVAR_DEFINE_STRING(
     graw_native_capture_dir, "", "GRAW native",
     "Folder for front buffer captures (native + Xenos PNGs, PSNR), marks and draw "
@@ -334,6 +335,15 @@ bool Presenter::Impl::CaptureRequested(uint64_t frame) {
     request_poll = 0;
     std::error_code ec;
     if (std::filesystem::remove(capture_request, ec)) want = true;
+    // Debug: <dir>\memory.request writes the guest's physical memory to <dir>\memory-f<frame>.bin.
+    if (std::filesystem::remove(capture_dir / "memory.request", ec)) {
+      const auto path = capture_dir / ("memory-f" + std::to_string(frame) + ".bin");
+      if (std::FILE* f = std::fopen(path.string().c_str(), "wb")) {
+        std::fwrite(rex::system::kernel_memory()->physical_membase(), 1, size_t(512) << 20, f);
+        std::fclose(f);
+        REXLOG_INFO("GRAW native: guest memory written to {}", path.string());
+      }
+    }
   }
   if (want) {
     burst_left = std::max(REXCVAR_GET(graw_native_capture_burst), 1) - 1;
@@ -509,11 +519,13 @@ void Presenter::Impl::OnSwap(const SwapCall& swap, bool shown) {
       list->SetGraphicsRootSignature(root_signature.Get());
       list->SetPipelineState(hdr ? hdr_pso.Get() : pso.Get());
       list->SetGraphicsRootDescriptorTable(0, gpu);
-      // The image (1280x720 in PGR4's mode) scaled to fit the window, centred, aspect kept.
+      // The image (1280x720 in PGR4's mode) scaled to fit the window, centred, aspect kept, or
+      // at --graw_native_aspect when the game draws a wider picture into it.
       const float iw = float(extent.width), ih = float(extent.height);
       const float ww = float(d.width()), wh = float(d.height());
-      const float s = std::min(ww / iw, wh / ih);
-      const float vw = std::round(iw * s), vh = std::round(ih * s);
+      const double shown = REXCVAR_GET(graw_native_aspect);
+      const float aspect = shown > 0.5 ? float(shown) : iw / ih;
+      const float vw = std::round(std::min(ww, wh * aspect)), vh = std::round(vw / aspect);
       const LONG vx = LONG(std::floor((ww - vw) * 0.5f)), vy = LONG(std::floor((wh - vh) * 0.5f));
       // Black bars around the aspect-fit image. The swapchain's images get no fast clear, so
       // a full clear would write every pixel the blit then writes again.
