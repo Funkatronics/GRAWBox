@@ -6,6 +6,8 @@
 
 #include <rex/ppc/hook.h>
 
+const bool grawbox::kTitleWidens = false;  // the aspect_ratio setting is GRAW 2 only so far
+
 const GrawboxTitle grawbox::kTitle = {
     .size = sizeof(GrawboxTitle),
     .push = 0,

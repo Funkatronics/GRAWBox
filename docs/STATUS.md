@@ -59,9 +59,14 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   and the lower half of the picture is black. The game's camera controller keeps the eye out of walls, so the distance
   has to change there. Next: watch the camera position (+88) for the writer (hardware breakpoint, as below) and walk
   up to the controller's distance.
-- **Ultrawide** (wanted): the games draw 1280x720 and are pillarboxed on 21:9. The aspect comes from the view's size
-  (+618 / +620, stored at +600). Wider needs the D3D device made wider, the native renderer at non-720 sizes, and that
-  aspect. The HUD may stay 16:9. The largest part, not started.
+- **Ultrawide: first version for GRAW 2** (launcher Aspect ratio: 16:9, 21:9, 32:9, display; checked on WARP at 21:9 in
+  a 16:9 window, letterboxed). The camera gets the aspect with its vertical field of view kept (camera.cpp, also
+  view+600); the game still draws 1280x720 squeezed across, and the native renderer stretches it back when it
+  presents (--graw_native_aspect). Culling and the HUD's world markers follow the camera, so they line up.
+  Left: the HUD, menus and text are stretched across (next: squeeze 2D draws back to 16:9 in the native renderer,
+  keeping the world markers where they belong); the picture has only the 16:9 image's pixels across (later: a draw
+  scale per axis, so 21:9 gets its own columns); the emulated renderer shows the squeezed picture (F9 is a test
+  feature); GRAW 1 not done (kTitleWidens false).
 - How the camera was found, for GRAW 1 and the distance: a debug probe in the native renderer logs projection-shaped
   VS constants with the draw's guest back chain; the projection is then found in memory, and a hardware write
   breakpoint (Dr0 on the host address of the guest float, set from a helper thread) gives the writing host address,

@@ -57,5 +57,8 @@ REXCVAR_DEFINE_BOOL(graw_native_haze_tuning, false, "GRAW native",
                     "F8 goes through the variants of the fixed haze");
 REXCVAR_DEFINE_INT32(graw_native_ao, 0, "GRAW native",
                      "Ambient occlusion, its strength in percent (0: none)");
+REXCVAR_DEFINE_DOUBLE(graw_native_aspect, 0.0, "GRAW native",
+                      "Width over height the picture is shown at (0: the image's own); a wider one "
+                      "stretches it across, for a game drawing that aspect into 1280x720");
 REXCVAR_DEFINE_DOUBLE(graw_native_sharpness, 0.0, "GRAW native",
                       "Sharpening of the scene, 0 to 1");

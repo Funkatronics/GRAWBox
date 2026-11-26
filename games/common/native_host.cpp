@@ -22,6 +22,22 @@
 REX_EXTERN(__imp__XamIsUIActive);
 
 namespace grawbox {
+
+double AspectRatio() {
+  static const double aspect = [] {
+    const std::string a = kTitleWidens ? Settings().aspect_ratio.Get() : "16:9";
+    if (a == "21:9") return 21.0 / 9.0;
+    if (a == "32:9") return 32.0 / 9.0;
+    if (a == "display") {
+      const int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
+      // Narrower than 16:9 keeps the games' 16:9, with bars above and below.
+      if (w > 0 && h > 0 && double(w) / h > 16.0 / 9.0 + 0.01) return double(w) / h;
+    }
+    return 16.0 / 9.0;
+  }();
+  return aspect;
+}
+
 namespace {
 
 constexpr uint32_t kSwap = 10;  // native/src/graw_d3d.h
@@ -130,6 +146,8 @@ const char* Option(const char* name) {
                         (automatic ? "@auto=1;" : ""))
         .c_str();
   }
+  if (n == "native_aspect")
+    return (values[n] = std::to_string(AspectRatio())).c_str();
   if (n == "native_resolution_scale")
     return (values[n] = std::to_string(Settings().resolution_scale.Get())).c_str();
   return nullptr;

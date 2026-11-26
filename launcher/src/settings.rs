@@ -37,6 +37,8 @@ pub struct Settings {
     pub vsync: bool,
     /// Percent of the game's own (GRAW 2).
     pub field_of_view: u32,
+    /// 16:9, 21:9, 32:9 or display (GRAW 2).
+    pub aspect_ratio: String,
     pub anisotropy: u32,
     pub ambient_occlusion: u32,
     pub sharpness: f32,
@@ -60,6 +62,7 @@ impl Default for Settings {
             fullscreen: true,
             vsync: true,
             field_of_view: 100,
+            aspect_ratio: "16:9".into(),
             anisotropy: 16,
             ambient_occlusion: 0,
             sharpness: 0.0,
@@ -113,6 +116,9 @@ impl Settings {
         if !["fixed", "original", "off"].contains(&&s.haze[..]) {
             s.haze = d.haze;
         }
+        if !["16:9", "21:9", "32:9", "display"].contains(&&s.aspect_ratio[..]) {
+            s.aspect_ratio = d.aspect_ratio.clone();
+        }
         if !["auto", "controller", "keyboard"].contains(&&s.prompts[..]) {
             s.prompts = d.prompts;
         }
@@ -147,6 +153,7 @@ impl Settings {
             format!("--gpu.resolution_scale_y={}", self.scale),
             format!("--native.vsync={}", self.vsync),
             format!("--native.field_of_view={}", self.field_of_view),
+            format!("--native.aspect_ratio={}", self.aspect_ratio),
             format!("--native.anisotropy={}", self.anisotropy),
             format!("--native.ambient_occlusion={}", self.ambient_occlusion),
             format!("--native.sharpness={}", self.sharpness),

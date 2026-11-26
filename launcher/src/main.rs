@@ -234,6 +234,9 @@ impl App {
                 row(ui, "Field of view", "How much of the world you see. 100 % is the game's own. GRAW 2 only for now.", |ui| {
                     ui.add(egui::Slider::new(&mut s.field_of_view, 75..=150).step_by(5.0).suffix(" %"));
                 });
+                row(ui, "Aspect ratio", "Wider pictures for wide screens, with the native renderer. GRAW 2 only for now; its HUD and menus are stretched.", |ui| {
+                    choice(ui, &mut s.aspect_ratio, &[("16:9", "16:9"), ("21:9", "21:9"), ("32:9", "32:9"), ("display", "Display")]);
+                });
             });
         });
         let native = s.renderer == "native";
