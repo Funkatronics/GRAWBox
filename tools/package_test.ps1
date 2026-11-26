@@ -38,8 +38,7 @@ $scripts = @(
     @('NATIVE-4K-AO-SHARP', 'native', 3, '--native.ambient_occlusion=80 --native.sharpness=0.5'),
     @('NATIVE-4K-HAZE-TUNING', 'native', 3, '--native.haze_tuning=true --native.ambient_occlusion=80 --native.sharpness=0.5'),
     @('CAPTURE-F12', 'native', 3, '', 'set GRAWBOX_NATIVE_CAPTURE_DIR=%~dp0captures& set GRAWBOX_NATIVE_CAPTURE_XENOS=false& set GRAWBOX_NATIVE_CAPTURE_BURST=6& set GRAWBOX_NATIVE_MARK_AUDIT=3& if not exist captures mkdir captures'),
-    @('SKY-4-HAZE-OFF', 'native', 3, '--native.haze=off'),
-    @('SKY-5-NO-SPECIALIZED-RESOLVES', 'native', 3, '', 'set GRAWBOX_NATIVE_RESOLVE_SPECIALIZE=false'),
+    @('SKY-6-COPY-EVERY-DRAW', 'native', 3, '', 'set GRAWBOX_NATIVE_CAPTURE_DIR=%~dp0captures& if not exist captures mkdir captures& echo 32> captures\draw-debug.txt'),
     @('NATIVE-4K-ORIGINAL-HAZE', 'native', 3, '--native.haze=original'),
     @('EMULATED-THEN-F9', 'emulated', 3, ''),
     @('NATIVE-4K-KEYBOARD', 'native', 3, '--hid.drivers=keyboard,sdl3 --hid.shared_pads=true')
