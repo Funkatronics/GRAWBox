@@ -48,8 +48,8 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   B held and the d-pad scroll the weapons; a tap goes back to the last. There is no sprint.
 - GRAW 1 prompts still showing the pad: X, Y, triggers, BACK, in-text icons.
 - Native renderer: no occlusion queries (a fixed count is reported); Vulkan not brought over; system dialogs not tested.
-- **Field of view: done for GRAW 2** (games/graw2-campaign/src/camera.cpp, launcher slider 75 to 150 %, checked on
-  WARP at 130 %). GRAW 2 builds each view's projection in sub_82351AB8 with sub_8232F0D0 from the camera object at
+- **Field of view: done for both games** (games/*-campaign/src/camera.cpp, launcher slider 75 to 150 %, both checked on
+  WARP at 130 %; GRAW 1: sub_8212B298 called from sub_82181F58 at 0x82181FEC, camera at view+592). GRAW 2 builds each view's projection in sub_82351AB8 with sub_8232F0D0 from the camera object at
   view+604: +72 four times the vertical half angle (1.5 to 1.6 in play), +76 near 0.1, +80 far 2100, +88 a 4x4 with
   rows right, forward, up, position. sub_823CFA98(camera, view+24) makes the view matrix; the view-projection and
   frustum planes follow from it, so culling matches. The main view object was 0x40280FB0 in every run.

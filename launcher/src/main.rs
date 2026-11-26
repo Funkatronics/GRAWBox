@@ -231,7 +231,7 @@ impl App {
                 });
                 row(ui, "Fullscreen", "", |ui| { ui.checkbox(&mut s.fullscreen, ""); });
                 row(ui, "VSync", "", |ui| { ui.checkbox(&mut s.vsync, ""); });
-                row(ui, "Field of view", "How much of the world you see. 100 % is the game's own. GRAW 2 only for now.", |ui| {
+                row(ui, "Field of view", "How much of the world you see. 100 % is the game's own.", |ui| {
                     ui.add(egui::Slider::new(&mut s.field_of_view, 75..=150).step_by(5.0).suffix(" %"));
                 });
                 row(ui, "Aspect ratio", "Wider pictures for wide screens, with the native renderer. Menus and HUD stay 16:9 in the middle. GRAW 2 only for now.", |ui| {
