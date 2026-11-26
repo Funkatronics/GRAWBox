@@ -25,7 +25,10 @@ namespace grawbox {
 
 double AspectRatio() {
   static const double aspect = [] {
-    const std::string a = kTitleWidens ? Settings().aspect_ratio.Get() : "16:9";
+    // Only the native renderer stretches the wider picture back out when it presents; the emulated
+    // one would show it squashed. F9 to the emulated renderer mid-game still does (a test feature).
+    const bool widens = kTitleWidens && Settings().renderer.Get() == "native";
+    const std::string a = widens ? Settings().aspect_ratio.Get() : "16:9";
     if (a == "21:9") return 21.0 / 9.0;
     if (a == "32:9") return 32.0 / 9.0;
     if (a == "display") {
