@@ -67,6 +67,10 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   keeping the world markers where they belong); the picture has only the 16:9 image's pixels across (later: a draw
   scale per axis, so 21:9 gets its own columns); the emulated renderer shows the squeezed picture (F9 is a test
   feature); GRAW 1 not done (kTitleWidens false).
+  HUD draws (GRAW 2 gameplay, draw log): quad lists whose VS constants c0..c1 are the pixel-to-clip map
+  (2/1280, 0, 0, -1), (0, -2/720, 0, 1); vertex shaders BC85A0722BC60F1F and 5E86638787777C19, positions 16-bit
+  integer pixels (FMT_16_16_16_16, stride 16). So the renderer can tell them and their extent across, and change c0
+  to squeeze a draw toward the centre or about its own middle. World markers are such draws too, at projected points.
 - How the camera was found, for GRAW 1 and the distance: a debug probe in the native renderer logs projection-shaped
   VS constants with the draw's guest back chain; the projection is then found in memory, and a hardware write
   breakpoint (Dr0 on the host address of the guest float, set from a helper thread) gives the writing host address,
