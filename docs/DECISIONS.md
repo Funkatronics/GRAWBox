@@ -44,3 +44,10 @@
 Releases are built on the developer's machine with tools/release.ps1 and uploaded with gh (docs/RELEASING.md), not by
 CI: the programs are built from the owner's game files, which stay on that machine. CI builds and tests the launcher only.
 A private repository with the files for CI can replace this later.
+
+## Pull requests, main and prod
+
+Every change goes through a pull request into `main`, reviewed with a code review agent and squash-merged. `prod` holds
+tested code: a release is a pull request from `main` into `prod` (a merge commit, so the two stay in step), tagged on
+`prod`. Both branches are protected. Builds from `main` between releases are pre-releases. Open work is tracked in
+GitHub issues.

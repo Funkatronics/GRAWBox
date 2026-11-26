@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester" is a person on a real GPU.
+Updated 2026-11-26. "WARP" is the software GPU used for automated runs; "tester" is a person on a real GPU.
 
 ## Where it stands
 
@@ -22,7 +22,8 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   presents; the `FLICKER-*` test scripts each rule one out.
   Now seen in GRAW 2 too, and it goes away while a capture is taken: timing, not content. GRAW 1's paused frames alternate
   between three kinds (shadow cascades refreshed in turn).
-- **Releases:** v0.1.0, 2026-11-25, from 63c2e1a (branch input-and-launcher, not merged to main yet).
+- **Releases:** v0.1.0, 2026-11-25, from 63c2e1a. v0.2.0, 2026-11-26, from 349535c on prod (field of view, ultrawide,
+  HUD layout, saves in the launcher).
 - **Pause flicker, details (tester):** fast, moving, polygonal flashes, mostly bright green, sometimes blue, against the
   sky; starts after a few seconds paused (alt-tab is not needed); native only. Not changed by: GPU serialized, one
   submission per frame, texture capture order off, haze off or original, 720p, general resolves, a vertex copy for
