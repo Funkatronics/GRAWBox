@@ -48,6 +48,14 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   frame and kept nowhere but the GPU command buffer (GRAW 2, memory dump in gameplay): vertical field of view 0.8 rad in GRAW 2,
   0.75 in GRAW 1 (70 degrees across), 16:9. Scaling it in the renderer would break GRAW 2's screen-space shadows, which rebuild
   positions with the game's matrices, so the camera code has to be found. `<capture dir>\memory.request` dumps guest memory.
+  Scope (2026-11-25): a GRAW 2 gameplay dump holds no 16:9 float and its 286 copies of 0.8 are vertex data, so the
+  camera is found by its code, not its data. Plan, all on WARP (no frame rate needed):
+  1. FOV: log the guest call stack (back-chain, as the wait trace did) when a hooked call writes a projection-shaped
+     VS constant block; read the function in generated/; override where the field of view is loaded (as the GRAW 1 HUD
+     fix overrides 0x821B9164). Then a launcher setting. GRAW 1 and 2 separately.
+  2. Third-person distance: the same trace on the view matrix finds the camera that places the eye behind the player.
+  3. Ultrawide (gameplay): the game's back buffer is 1280x720; wider needs the D3D device made wider, the native
+     renderer at non-720 sizes, and a projection with the wider aspect (from 1). The HUD may stay 16:9. The largest part.
 - Not tested: drone and squad feeds beyond the first mission, loading GRAW 1 saves, later missions, returning to the front end.
 
 ## Findings worth keeping
