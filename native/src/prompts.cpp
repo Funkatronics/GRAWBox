@@ -367,7 +367,9 @@ XInputGetStateFn XInputGetState() {
 
 // A controller used since the last call: its state changed in a way a person makes (a button or
 // trigger, or a stick moved well off its centre), not the small drift of a resting stick.
-bool PadUsed() {
+// `changed`: any change at all, the small ones included.
+bool PadUsed(bool* changed) {
+  *changed = false;
   const XInputGetStateFn get = XInputGetState();
   if (!get) return false;
   struct State {
@@ -381,6 +383,7 @@ bool PadUsed() {
   for (DWORD i = 0; i < 4; ++i) {
     State s;
     if (get(i, &s) != ERROR_SUCCESS || s.packet == last[i].packet) continue;
+    *changed = true;
     const State& o = last[i];
     auto moved = [](int a, int b, int by) { return std::abs(a - b) > by; };
     auto off = [](SHORT v) { return v > 12000 || v < -12000; };
@@ -423,12 +426,13 @@ bool PromptsShown() {
 bool PollPromptDevice() {
   if (!Labels().count("@auto")) return false;
   // The last device used wins. A controller also counts as input to Windows (GetLastInputInfo):
-  // that is mouse motion only while no controller was used in the last half second.
+  // that is mouse motion only while the controller's state did not change in the last half second.
   static DWORD last_input = 0;
   static ULONGLONG pad_at = 0;
   const ULONGLONG now = GetTickCount64();
-  const bool pad = PadUsed();
-  if (pad) pad_at = now;
+  bool pad_changed = false;
+  const bool pad = PadUsed(&pad_changed);
+  if (pad_changed) pad_at = now;
   LASTINPUTINFO info = {sizeof(info)};
   const bool any = GetLastInputInfo(&info) && last_input && info.dwTime != last_input;
   last_input = info.dwTime;
