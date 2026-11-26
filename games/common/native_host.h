@@ -37,11 +37,14 @@ class NativeSettings : public rex::SettingOwner {
               "Button prompts: controller, keyboard, or auto for the keyboard driver's choice",
               rex::Allowed("auto", "controller", "keyboard"), rex::kRestart);
   REX_SETTING(rex::i32, field_of_view, 100,
-              "Field of view in percent of the game's own (GRAW 2), as the width of the picture",
+              "Field of view in percent of the game's own, as the width of the picture",
               rex::Range{75, 150}, rex::kRestart);
   REX_SETTING(std::string, aspect_ratio, "16:9",
-              "Shape of the picture (GRAW 2): 16:9 as the games, 21:9, 32:9, or the display's",
+              "Shape of the picture: 16:9 as the games, 21:9, 32:9, or the display's",
               rex::Allowed("16:9", "21:9", "32:9", "display"), rex::kRestart);
+  REX_SETTING(std::string, hud_layout, "centered",
+              "Menus and HUD on a wider picture: centered (16:9 in the middle) or stretched across",
+              rex::Allowed("centered", "stretched"), rex::kRestart);
   REX_SETTING(bool, vsync, true, "Wait for the display when the native renderer presents",
               rex::kRestart);
 };
@@ -50,6 +53,8 @@ NativeSettings& Settings();
 // The picture's width over its height from the aspect_ratio setting: 16/9 unless a wider one is
 // chosen. "display" is the primary display's.
 double AspectRatio();
+// Whether menus and HUD are kept 16:9 in the middle of a wider picture (hud_layout).
+bool HudCentered();
 void SetApp(rex::app::App* app);
 void Call(uint32_t function, PPCContext& ctx, uint8_t* base,
           void (*original)(PPCContext&, uint8_t*));

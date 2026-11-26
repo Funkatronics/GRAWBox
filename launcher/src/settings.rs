@@ -35,10 +35,12 @@ pub struct Settings {
     pub scale: u32,
     pub fullscreen: bool,
     pub vsync: bool,
-    /// Percent of the game's own (GRAW 2).
+    /// Percent of the game's own.
     pub field_of_view: u32,
-    /// 16:9, 21:9, 32:9 or display (GRAW 2).
+    /// 16:9, 21:9, 32:9 or display.
     pub aspect_ratio: String,
+    /// Menus and HUD on a wider picture: centered or stretched.
+    pub hud_layout: String,
     pub anisotropy: u32,
     pub ambient_occlusion: u32,
     pub sharpness: f32,
@@ -63,6 +65,7 @@ impl Default for Settings {
             vsync: true,
             field_of_view: 100,
             aspect_ratio: "16:9".into(),
+            hud_layout: "centered".into(),
             anisotropy: 16,
             ambient_occlusion: 0,
             sharpness: 0.0,
@@ -119,6 +122,9 @@ impl Settings {
         if !["16:9", "21:9", "32:9", "display"].contains(&&s.aspect_ratio[..]) {
             s.aspect_ratio = d.aspect_ratio.clone();
         }
+        if !["centered", "stretched"].contains(&&s.hud_layout[..]) {
+            s.hud_layout = d.hud_layout.clone();
+        }
         if !["auto", "controller", "keyboard"].contains(&&s.prompts[..]) {
             s.prompts = d.prompts;
         }
@@ -154,6 +160,7 @@ impl Settings {
             format!("--native.vsync={}", self.vsync),
             format!("--native.field_of_view={}", self.field_of_view),
             format!("--native.aspect_ratio={}", self.aspect_ratio),
+            format!("--native.hud_layout={}", self.hud_layout),
             format!("--native.anisotropy={}", self.anisotropy),
             format!("--native.ambient_occlusion={}", self.ambient_occlusion),
             format!("--native.sharpness={}", self.sharpness),

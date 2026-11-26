@@ -48,6 +48,7 @@ $scripts += @(
     @('NATIVE-4K-FOV-85', 'native', 3, '--native.field_of_view=85'),
     @('NATIVE-4K-WIDE-DISPLAY', 'native', 3, '--native.aspect_ratio=display'),
     @('NATIVE-4K-WIDE-21x9', 'native', 3, '--native.aspect_ratio=21:9'),
+    @('NATIVE-4K-WIDE-DISPLAY-HUD-STRETCHED', 'native', 3, '--native.aspect_ratio=display --native.hud_layout=stretched'),
     @('NATIVE-4K-WIDE-DISPLAY-FOV-115', 'native', 3, '--native.aspect_ratio=display --native.field_of_view=115')
 )
 foreach ($s in $scripts) {

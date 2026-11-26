@@ -234,8 +234,11 @@ impl App {
                 row(ui, "Field of view", "How much of the world you see. 100 % is the game's own.", |ui| {
                     ui.add(egui::Slider::new(&mut s.field_of_view, 75..=150).step_by(5.0).suffix(" %"));
                 });
-                row(ui, "Aspect ratio", "Wider pictures for wide screens, with the native renderer. Menus and HUD stay 16:9 in the middle.", |ui| {
+                row(ui, "Aspect ratio", "Wider pictures for wide screens, with the native renderer.", |ui| {
                     choice(ui, &mut s.aspect_ratio, &[("16:9", "16:9"), ("21:9", "21:9"), ("32:9", "32:9"), ("display", "Display")]);
+                });
+                row(ui, "HUD on wide screens", "Centered keeps menus and HUD 16:9 in the middle; stretched spreads them across.", |ui| {
+                    choice(ui, &mut s.hud_layout, &[("centered", "Centered 16:9"), ("stretched", "Stretched")]);
                 });
             });
         });

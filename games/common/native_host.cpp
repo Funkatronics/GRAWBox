@@ -38,6 +38,11 @@ double AspectRatio() {
   return aspect;
 }
 
+bool HudCentered() {
+  static const bool centered = Settings().hud_layout.Get() != "stretched";
+  return centered;
+}
+
 namespace {
 
 constexpr uint32_t kSwap = 10;  // native/src/graw_d3d.h

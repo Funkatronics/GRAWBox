@@ -91,6 +91,7 @@ REXCVAR_DEFINE_INT32(graw_native_draw_log_frames, 1, "GRAW native",
                      "bit 16) covers");
 REXCVAR_DECLARE(int32_t, graw_native_anisotropy);  // native_cvars.cpp, both backends
 REXCVAR_DECLARE(double, graw_native_mip_bias);
+REXCVAR_DECLARE(double, graw_native_aspect);  // native_cvars.cpp
 REXCVAR_DECLARE(std::string, graw_native_capture_dir);
 namespace rex::graphics {
 extern bool g_dxbc_implicit_gradients;  // dxbc_translator_fetch.cpp (local SDK experiment)
@@ -270,6 +271,25 @@ struct CachedCbv {
 // `cb.last`, compared with what was there on the way (one register = 16 bytes = one SSE
 // load/store, no calls); 16 zero bytes for no shader or no constants (a CBV needs some data).
 // The games' distance haze: the final picture's mix with its blurred and displaced copies.
+// Ultrawide (--graw_native_aspect): the game draws a wider picture into 1280x720 and the present
+// stretches it back across. GRAW 2's world draws carry their projection in c4..c7, x scale in c4.x
+// and y scale in c5.z, so c5.z / c4.x is the picture's aspect (the main camera's is the wide one).
+// Overlays the game draws with its own fixed 16:9 projection (the aim reticle) would come out
+// stretched: their x row is scaled by 16:9 over the aspect, `k`.
+bool OverlayIs16x9(const DrawState& s, float& k) {
+  const float squeeze = [] {
+    const double aspect = REXCVAR_GET(graw_native_aspect);
+    return aspect > 16.0 / 9.0 + 0.01 ? float(16.0 / 9.0 / aspect) : 1.0f;
+  }();
+  if (squeeze == 1.0f) return false;
+  const uint32_t* c = &s.regs[XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * 4];
+  auto f = [&](uint32_t i) { return std::bit_cast<float>(c[i]); };
+  if (f(1) != 0 || f(2) != 0 || f(3) != 0 || f(4) != 0 || f(5) != 0 || f(7) != 0) return false;
+  if (!(f(0) > 0) || !(f(6) > 0) || std::fabs(f(6) / f(0) - 16.0f / 9.0f) > 1e-3f) return false;
+  k = squeeze;
+  return true;
+}
+
 bool IsHazeShader(uint64_t ucode_hash) {
   return ucode_hash == 0xCFC1BD3557C8B735ull ||  // GRAW 1
          ucode_hash == 0xF17045F9B4E36E54ull;   // GRAW 2
@@ -2714,6 +2734,13 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
     *range = old_range;
     shift[0] = old_shift[0];
     shift[1] = old_shift[1];
+  } else if (float k; OverlayIs16x9(s, k)) {
+    uint32_t* const row = const_cast<uint32_t*>(&s.regs[XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * 4]);
+    const uint32_t old = row[0];
+    row[0] = std::bit_cast<uint32_t>(std::bit_cast<float>(old) * k);
+    PackFloats(cb_float_vs, vs, s.regs, XE_GPU_REG_SHADER_CONSTANT_000_X);
+    row[0] = old;
+    PackFloats(cb_float_ps, ps, s.regs, XE_GPU_REG_SHADER_CONSTANT_256_X);
   } else {
     PackFloats(cb_float_vs, vs, s.regs, XE_GPU_REG_SHADER_CONSTANT_000_X);
     PackFloats(cb_float_ps, ps, s.regs, XE_GPU_REG_SHADER_CONSTANT_256_X);

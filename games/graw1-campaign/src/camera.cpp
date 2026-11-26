@@ -58,7 +58,7 @@ REX_EXTERN(__imp__sub_824C87D0);
 REX_HOOK_RAW(sub_824C87D0) {
   // SetVertexShaderConstantF(device, start, data, count) from sub_8216EAA0: the GUI's map.
   static const double aspect = grawbox::AspectRatio();
-  if (static_cast<uint32_t>(ctx.lr) == 0x8216EB3C && aspect > 16.0 / 9.0 + 0.01) {
+  if (static_cast<uint32_t>(ctx.lr) == 0x8216EB3C && aspect > 16.0 / 9.0 + 0.01 && grawbox::HudCentered()) {
     const float k = static_cast<float>(16.0 / 9.0 / aspect);
     const uint32_t c0 = ctx.r5.u32;  // on sub_8216EAA0's stack
     Store32(base, c0, std::bit_cast<uint32_t>(LoadFloat(base, c0) * k));

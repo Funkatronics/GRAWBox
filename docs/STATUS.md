@@ -74,6 +74,13 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   stretched across (user report): they need narrowing about their own centres. GRAW 1 done the same way (aspect at
   view+588; GUI map from sub_8216EAA0 via sub_824C87D0 at 0x8216EB3C; checked on WARP at 21:9); its loading-screen
   logo is stretched too (another path).
+  User report (GRAW 2, ultrawide): yellow objective squares correct; aim reticle, red enemy highlights and the tac map
+  stretched across; the loading screen (black, small round logo bottom right) stretched, low priority. Measured on
+  WARP at 21:9: reticle ticks 42 px from the middle across, 30 up and down (16:9: 42 both). Cause: the reticle is drawn
+  with its own fixed 16:9 projection in c4..c7 (c4.x 1.125, c5.z 2; the main camera's draws carry the wide one). The
+  native renderer now scales the x row of any draw whose c4..c7 projection is 16:9 on a wider picture (draw.cpp,
+  OverlayIs16x9): reticle checked square on WARP; red highlights and tac map not seen in the WARP runs yet.
+  hud_layout setting (launcher "HUD on wide screens"): centered (default) or stretched.
 - How the camera was found, for GRAW 1 and the distance: a debug probe in the native renderer logs projection-shaped
   VS constants with the draw's guest back chain; the projection is then found in memory, and a hardware write
   breakpoint (Dr0 on the host address of the guest float, set from a helper thread) gives the writing host address,
