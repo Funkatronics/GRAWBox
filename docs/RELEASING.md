@@ -24,7 +24,8 @@ Asset names keep this pattern so update tools (Obtainium) can match them: `GRAWB
 
 ## Before
 
-1. Everything for the release is committed and pushed, the tree is clean (the script checks both).
+1. `prod` is up to date with `main` through a pull request, it is checked out, and the tree is clean and pushed
+   (the script checks the last two).
 2. The owner's files are extracted to `private/graw1/` and `private/graw2/` (`disc/`, `update/`), as for
    `tools/build.ps1`.
 3. `gh auth status` shows a login that can create releases on the repository.
