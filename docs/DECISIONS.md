@@ -36,3 +36,5 @@
 - **2026-11-25, order:** launcher next. Hitches and bugs seen once wait until the games can be run properly for tests.
 - **2026-11-25, launcher:** Rust with egui/eframe on wgpu (Direct3D 12 on Windows, Vulkan later on Linux), rfd, serde, toml.
   Crate licenses checked; all permissive (self_cell taken under Apache-2.0). Windows only for now.
+- **2026-11-25, releases:** releases ship the built programs, as other recompiled ports do, with the launcher. Game files,
+  assets, title updates and keys never ship; translated source is never committed. Owner's rule from the start.
