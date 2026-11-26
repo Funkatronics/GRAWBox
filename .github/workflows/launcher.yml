@@ -1,10 +1,10 @@
-﻿# Builds and tests the launcher. A tag v* also publishes it as a release asset.
+﻿# Builds and tests the launcher. Releases are made with tools/release.ps1 (docs/RELEASING.md): they need the
+# game programs, which CI cannot build.
 name: launcher
 
 on:
   push:
     branches: ["**"]
-    tags: ["v*"]
     paths: ["launcher/**", "input/keys.h", ".github/workflows/launcher.yml"]
   pull_request:
     paths: ["launcher/**", "input/keys.h", ".github/workflows/launcher.yml"]
@@ -37,7 +37,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $name = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { 'dev' }
+          $name = 'dev'
           New-Item -ItemType Directory dist/GRAWBox | Out-Null
           Copy-Item launcher/target/release/GRAWBox.exe, LICENSE, README.md dist/GRAWBox/
           Copy-Item launcher/fonts/OFL.txt dist/GRAWBox/OFL-Rajdhani.txt
@@ -47,17 +47,3 @@ jobs:
           name: GRAWBox-windows-x64
           path: dist/*.zip
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v5
-        with:
-          name: GRAWBox-windows-x64
-      - name: Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" GRAWBox-*.zip --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --prerelease
