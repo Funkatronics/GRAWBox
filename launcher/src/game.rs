@@ -157,6 +157,8 @@ fn recognize(source: &Source) -> Option<&'static Game> {
 /// A copy from a disc image or title update, on a thread of its own.
 pub struct Import {
     pub game: &'static Game,
+    /// A whole disc, as opposed to a title update.
+    pub disc: bool,
     pub done: Arc<AtomicU64>,
     pub total: u64,
     pub stop: Arc<AtomicBool>,
@@ -175,7 +177,9 @@ impl Import {
             game.update.iter().map(|(n, _)| n.to_string()).collect()
         };
         let total = names.iter().map(|n| source.files()[n].length).sum();
-        let root = game.game_dir(s);
+        // A disc always goes into the launcher's own folder, never over a folder the player chose
+        // (the caller drops that choice once it is copied). A title update goes beside the game.
+        let root = if disc { game.data().join("game") } else { game.game_dir(s) };
         if let Some(space) = free_space(&root) {
             if space < total + (1 << 28) {
                 return Err(format!(
@@ -186,6 +190,7 @@ impl Import {
         }
         let import = Import {
             game,
+            disc,
             done: Arc::default(),
             total,
             stop: Arc::default(),

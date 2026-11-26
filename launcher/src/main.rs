@@ -150,7 +150,12 @@ impl App {
         }
         let finished = self.import.as_ref().and_then(|i| i.result.lock().unwrap().take());
         if let Some(result) = finished {
-            self.import = None;
+            let import = self.import.take();
+            if let (Ok(_), Some(i)) = (&result, &import) {
+                if i.disc {
+                    self.settings.folders.remove(i.game.id);
+                }
+            }
             self.message = Some(match result {
                 Ok(t) => (true, t),
                 Err(e) => (false, e),
