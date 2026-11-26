@@ -508,13 +508,13 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   // made from, so a different shader loaded at the same address with the same size misses.
   // A race binds a few hundred shaders a frame.
   struct ShaderMemo {
-    static constexpr uint32_t kBits = 8, kEntries = 1u << kBits, kSample = 16;
+    static constexpr uint32_t kBits = 8, kEntries = 1u << kBits;
     static uint32_t Slot(const ShaderRef& ref) {
       return ((ref.ucode ^ (ref.dwords << 16)) * 0x9E3779B1u) >> (32 - kBits);  // Fibonacci
     }
     uint32_t ucode = 0, dwords = 0, immediate_seq = 0;
     uint64_t binding = 0;
-    uint32_t sample[kSample] = {};
+    uint64_t hash = 0;  // XXH3 of the whole ucode: games rewrite shaders in place
     DxbcShader* shader = nullptr;
   };
   ShaderMemo vs_memo[ShaderMemo::kEntries], ps_memo[ShaderMemo::kEntries];
@@ -1659,10 +1659,6 @@ DrawRenderer::Impl::FanIndices DrawRenderer::Impl::UploadFanIndices(const DrawSt
 DxbcShader* DrawRenderer::Impl::LoadShader(ShaderMemo* table, ShaderMemo*& last,
                                            const ShaderRef& ref, xenos::ShaderType type) {
   if (!ref.ucode || !ref.dwords) return nullptr;
-  // The previous draw's shader again (most draws): no guest memory read, as before the table.
-  if (last && last->shader && last->ucode == ref.ucode && last->dwords == ref.dwords &&
-      last->immediate_seq == ref.immediate_seq && last->binding == ref.binding)
-    return last->shader;
   // A ucode past the 512 MB of physical memory (an address the tracker didn't mask) isn't read.
   if (!ref.immediate && uint64_t(ref.ucode) + uint64_t(ref.dwords) * 4 > 0x20000000u) {
     GRAW_WARN_ONCE("GRAW native draw: shader ucode {:08X} ({} dwords) outside physical memory",
@@ -1672,16 +1668,18 @@ DxbcShader* DrawRenderer::Impl::LoadShader(ShaderMemo* table, ShaderMemo*& last,
   // Declaration-patched vertex shaders (IM_LOAD_IMMEDIATE) come from the tracker's copy.
   const uint32_t* ucode =
       ref.immediate ? ref.immediate : reinterpret_cast<const uint32_t*>(membase + ref.ucode);
-  uint32_t sample[ShaderMemo::kSample];
-  for (uint32_t i = 0; i < ShaderMemo::kSample / 2; ++i) {
-    sample[i] = ucode[std::min(i, ref.dwords - 1)];
-    sample[ShaderMemo::kSample / 2 + i] = ucode[ref.dwords - 1 - std::min(i, ref.dwords - 1)];
-  }
+  // The whole ucode, every draw (about 0.1 us for 300 dwords): a shader the game rewrote in place
+  // with the same first and last dwords was once drawn with its old translation.
+  const uint64_t hash = XXH3_64bits(ucode, size_t(ref.dwords) * 4);
+  if (last && last->shader && last->ucode == ref.ucode && last->dwords == ref.dwords &&
+      last->immediate_seq == ref.immediate_seq && last->binding == ref.binding &&
+      last->hash == hash)
+    return last->shader;
   ShaderMemo& memo = table[ShaderMemo::Slot(ref)];
   last = &memo;
   if (memo.shader && memo.ucode == ref.ucode && memo.dwords == ref.dwords &&
       memo.immediate_seq == ref.immediate_seq &&
-      std::memcmp(memo.sample, sample, sizeof(sample)) == 0) {
+      memo.hash == hash) {
     if (memo.binding == ref.binding) return memo.shader;
     GRAW_LOG_FIRST(
         8, INFO, "GRAW native draw: vertex shader {:08X} ({} dwords) rebound in place at frame {}",
@@ -1691,7 +1689,7 @@ DxbcShader* DrawRenderer::Impl::LoadShader(ShaderMemo* table, ShaderMemo*& last,
   memo.dwords = ref.dwords;
   memo.immediate_seq = ref.immediate_seq;
   memo.binding = ref.binding;
-  std::memcpy(memo.sample, sample, sizeof(sample));
+  memo.hash = hash;
   PrepareDiag& pd = PrepDiag();
   ++pd.shader_loads;
   if (ref.immediate) ++pd.shader_loads_immediate;
