@@ -1,4 +1,4 @@
-# Builds and tests the launcher. A tag v* also publishes it as a release asset.
+﻿# Builds and tests the launcher. A tag v* also publishes it as a release asset.
 name: launcher
 
 on:
@@ -16,7 +16,7 @@ jobs:
   build:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Toolchain
         run: rustup toolchain install stable --profile minimal
       - uses: actions/cache@v4
@@ -38,7 +38,7 @@ jobs:
           New-Item -ItemType Directory dist/GRAWBox | Out-Null
           Copy-Item launcher/target/release/GRAWBox.exe, LICENSE, README.md dist/GRAWBox/
           Compress-Archive dist/GRAWBox "dist/GRAWBox-$name-windows-x64.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: GRAWBox-windows-x64
           path: dist/*.zip
@@ -50,7 +50,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: GRAWBox-windows-x64
       - name: Release

@@ -1237,6 +1237,16 @@ void TextureCache::Retire(uint64_t completed_fence) {
   upload_.EndFrame(completed_fence);
   now_ms_ = NowNs() / 1000000;
   EvictOverBudget(completed_fence);
+  // The key caps change with the device used: the textures that hold them are read again.
+  bool any = false;
+  if (PollPromptDevice())
+    for (const Slot& s : slots_)
+      if (s.texture && !s.texture->failed && s.texture->uploads &&
+          PromptSheet(s.texture->key)) {
+        s.texture->dirty.store(true, std::memory_order_release);
+        any = true;
+      }
+  if (any) change_epoch_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 }  // namespace graw::native

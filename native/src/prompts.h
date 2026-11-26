@@ -21,7 +21,15 @@ void ApplyPrompts(const TextureKey& key, const uint8_t* guest, size_t guest_byte
 // with the key caps, kPromptScale times as large each way, as tightly packed RGBA8. `bytes`: what
 // the texture is known by, as above.
 constexpr uint32_t kPromptScale = 4;
+// The size of a texture with buttons, whether or not key caps are shown now.
 bool PromptSize(const TextureKey& key);
+// Once a frame on the recording thread: with automatic prompts, whether the keyboard and mouse
+// or a controller was used last. True when the key caps are to change: the textures of
+// PromptSize are uploaded again (ApplyPrompts and BuildPrompts follow PromptsShown).
+bool PollPromptDevice();
+// Any texture that can hold buttons (its size and format).
+bool PromptSheet(const TextureKey& key);
+bool PromptsShown();
 bool BuildPrompts(const TextureKey& key, const GuestTextureMemory& memory, size_t bytes,
                   std::vector<uint8_t>* rgba);
 

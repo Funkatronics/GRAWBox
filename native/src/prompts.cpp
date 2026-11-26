@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -325,7 +326,7 @@ void ApplyPrompts(const TextureKey& key, const uint8_t* guest, size_t guest_byte
       std::fclose(file);
     }
   }
-  if (REXCVAR_GET(graw_native_prompts).empty() || !guest || base.level) return;
+  if (!PromptsShown() || !guest || base.level) return;
   bool candidate = false;
   for (const Sheet& s : kSheets)
     candidate |= s.format == key.format && s.width == key.width && s.height == key.height;
@@ -348,6 +349,69 @@ void ApplyPrompts(const TextureKey& key, const uint8_t* guest, size_t guest_byte
                 key.height, uint32_t(key.format), key.base_page << 12, hash);
 }
 
+namespace {
+std::atomic<bool> g_keyboard_last{true};
+
+// XInputGetState, loaded on first use (no import of a particular XInput version).
+using XInputGetStateFn = DWORD(WINAPI*)(DWORD, void*);
+XInputGetStateFn XInputGetState() {
+  static const XInputGetStateFn fn = [] {
+    for (const wchar_t* name : {L"xinput1_4.dll", L"xinput9_1_0.dll"})
+      if (HMODULE m = LoadLibraryW(name))
+        return reinterpret_cast<XInputGetStateFn>(GetProcAddress(m, "XInputGetState"));
+    return XInputGetStateFn(nullptr);
+  }();
+  return fn;
+}
+
+// A controller in use: a button or trigger down, or a stick well off its centre.
+bool PadUsed() {
+  const XInputGetStateFn get = XInputGetState();
+  if (!get) return false;
+  struct {
+    DWORD packet;
+    WORD buttons;
+    BYTE lt, rt;
+    SHORT lx, ly, rx, ry;
+  } s;
+  for (DWORD i = 0; i < 4; ++i) {
+    if (get(i, &s) != ERROR_SUCCESS) continue;
+    auto off = [](SHORT v) { return v > 12000 || v < -12000; };
+    if (s.buttons || s.lt > 60 || s.rt > 60 || off(s.lx) || off(s.ly) || off(s.rx) || off(s.ry))
+      return true;
+  }
+  return false;
+}
+}  // namespace
+
+bool PromptSheet(const TextureKey& key) {
+  if (REXCVAR_GET(graw_native_prompts).empty()) return false;
+  for (const Sheet& s : kSheets)
+    if (s.format == key.format && s.width == key.width && s.height == key.height) return true;
+  return false;
+}
+
+bool PromptsShown() {
+  if (Labels().empty()) return false;
+  return !Labels().count("@auto") || g_keyboard_last.load(std::memory_order_relaxed);
+}
+
+bool PollPromptDevice() {
+  if (!Labels().count("@auto")) return false;
+  // Keyboard and mouse input (a controller does not count as input there).
+  static DWORD last_input = 0;
+  LASTINPUTINFO info = {sizeof(info)};
+  const bool keys = GetLastInputInfo(&info) && last_input && info.dwTime != last_input;
+  last_input = info.dwTime;
+  const bool pad = PadUsed();
+  const bool before = g_keyboard_last.load(std::memory_order_relaxed);
+  const bool now = pad ? false : keys ? true : before;
+  if (now == before) return false;
+  g_keyboard_last.store(now, std::memory_order_relaxed);
+  REXLOG_INFO("GRAW native prompts: {}", now ? "keys" : "controller buttons");
+  return true;
+}
+
 bool PromptSize(const TextureKey& key) {
   if (REXCVAR_GET(graw_native_prompts).empty() || key.mip_levels() != 1 || key.width > 128 ||
       key.format != xenos::TextureFormat::k_DXT2_3)
@@ -359,7 +423,7 @@ bool PromptSize(const TextureKey& key) {
 
 bool BuildPrompts(const TextureKey& key, const GuestTextureMemory& memory, size_t bytes,
                   std::vector<uint8_t>* rgba) {
-  if (!memory.base) return false;
+  if (!memory.base || !PromptsShown()) return false;
   const uint64_t hash = XXH3_64bits(memory.base, bytes);
   const Sheet* sheet = nullptr;
   for (const Sheet& s : kSheets)

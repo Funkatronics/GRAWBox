@@ -115,7 +115,9 @@ const char* Option(const char* name) {
     return (values[n] = std::to_string(Settings().mip_bias.Get())).c_str();
   if (n == "native_prompts") {
     std::string prompts = Settings().prompts.Get();
-    if (prompts == "auto") {
+    // Automatic: the keys while the keyboard and mouse were used last, with the keyboard driver.
+    const bool automatic = prompts == "auto";
+    if (automatic) {
       auto drivers = REX_SETTINGS().Find("hid.drivers");
       prompts = drivers && (*drivers)->GetText().find("keyboard") != std::string::npos
                     ? "keyboard" : "controller";
@@ -124,7 +126,8 @@ const char* Option(const char* name) {
     wchar_t path[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, path, MAX_PATH);
     return (values[n] = keys::PromptLabels(keys::Load(
-                std::filesystem::path(path).parent_path() / "grawbox-keys.txt")))
+                std::filesystem::path(path).parent_path() / "grawbox-keys.txt")) +
+                        (automatic ? "@auto=1;" : ""))
         .c_str();
   }
   if (n == "native_resolution_scale")
