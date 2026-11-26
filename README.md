@@ -3,8 +3,17 @@
 Native ports of the Xbox 360 versions of Ghost Recon Advanced Warfighter 1 and 2, made by static
 recompilation. Windows first, Android later.
 
-**Early development, no releases.** Both campaigns reach gameplay on Windows; neither has been played
-through. See [docs/STATUS.md](docs/STATUS.md).
+**Early development.** Both campaigns reach gameplay on Windows; neither has been played through.
+Known issues are in [docs/STATUS.md](docs/STATUS.md).
+
+## Playing
+
+1. Download `GRAWBox-vX.Y.Z-windows-x64.zip` from [Releases](../../releases) and unzip it anywhere.
+2. Run `GRAWBox.exe`.
+3. In **Game files**, drop your disc image (.iso) of each game, then its title update.
+4. Play from **Campaign**.
+
+Needs 64-bit Windows and a graphics card with Direct3D 12.
 
 ## No game files
 
