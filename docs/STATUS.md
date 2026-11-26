@@ -71,6 +71,11 @@ Updated 2026-11-25. "WARP" is the software GPU used for automated runs; "tester"
   (2/1280, 0, 0, -1), (0, -2/720, 0, 1); vertex shaders BC85A0722BC60F1F and 5E86638787777C19, positions 16-bit
   integer pixels (FMT_16_16_16_16, stride 16). So the renderer can tell them and their extent across, and change c0
   to squeeze a draw toward the centre or about its own middle. World markers are such draws too, at projected points.
+  Tried (uncommitted, draw.cpp HudSqueeze): each such draw squeezed about its own middle. Gameplay looks right (text,
+  icons, ammo, markers on target; the top band shows a gap), but menu buttons are several draws and come apart.
+  Menus and HUD are one GUI system (widget tree drawn through 826B4900 -> 826B301C -> 826D8C14, both in the front
+  end and in play), so there is no cheap menu/HUD switch. Next: find where that GUI takes its 1280x720 and give it
+  the wider width (1680x720 at 21:9), so it lays out for the wide screen itself; the per-draw squeeze is the fallback.
 - How the camera was found, for GRAW 1 and the distance: a debug probe in the native renderer logs projection-shaped
   VS constants with the draw's guest back chain; the projection is then found in memory, and a hardware write
   breakpoint (Dr0 on the host address of the guest float, set from a helper thread) gives the writing host address,
