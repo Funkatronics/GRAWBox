@@ -76,14 +76,14 @@ void (*ReportScreenshot())(const char*) {
                                                                          : nullptr;
 }
 
-// F10 in the game's window: a playtest report (report.h). Polled at each Swap.
 // Device Removed Extended Data: when a renderer loses its D3D12 device, the GPU's last operations and
 // any page fault are in the log (both renderers log them). Set before either renderer makes its
 // device. GRAWBOX_DRED=0 leaves it off, for comparing frame times.
 const char* g_dred = "off";
 void EnableDred() {
   char value[8] = {};
-  if (GetEnvironmentVariableA("GRAWBOX_DRED", value, sizeof(value)) && value[0] == '0') return;
+  const DWORD n = GetEnvironmentVariableA("GRAWBOX_DRED", value, sizeof(value));
+  if (n && n < sizeof(value) && std::string(value) == "0") return;
   HMODULE d3d12 = LoadLibraryW(L"d3d12.dll");
   if (!d3d12) return;
   using GetDebugInterface = HRESULT(WINAPI*)(REFIID, void**);
@@ -99,6 +99,7 @@ void EnableDred() {
   g_dred = "on";
 }
 
+// F10 in the game's window: a playtest report (report.h). Polled at each Swap.
 void PollReportKey() {
   static bool down = false, first = true;
   if (first) {

@@ -46,10 +46,13 @@ std::atomic<ID3D12Device*> g_device{nullptr};  // for the removal log; lives as 
 // last operations per command list and any page fault.
 void LogRemoval() {
   static std::atomic<bool> logged{false};
-  ID3D12Device* device = g_device.load();
-  if (!device || logged.exchange(true)) return;
-  REXLOG_ERROR("GRAW native: device removed, reason HRESULT {:08X}",
-               uint32_t(device->GetDeviceRemovedReason()));
+  // A reference of its own: the renderer may be going away on another thread.
+  ComPtr<ID3D12Device> device = g_device.load();
+  if (!device) return;
+  // Only a real removal uses up the one log (a driver error can leave the device working).
+  const HRESULT reason = device->GetDeviceRemovedReason();
+  if (SUCCEEDED(reason) || logged.exchange(true)) return;
+  REXLOG_ERROR("GRAW native: device removed, reason HRESULT {:08X}", uint32_t(reason));
   ComPtr<ID3D12DeviceRemovedExtendedData> dred;
   if (FAILED(device->QueryInterface(IID_PPV_ARGS(dred.GetAddressOf())))) {
     REXLOG_ERROR("GRAW native: no DRED data");
@@ -57,13 +60,18 @@ void LogRemoval() {
   }
   D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT crumbs = {};
   if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput(&crumbs))) {
-    int lists = 0;
-    for (const D3D12_AUTO_BREADCRUMB_NODE* n = crumbs.pHeadAutoBreadcrumbNode; n && lists < 8;
-         n = n->pNext) {
+    // Lists the GPU started and did not finish: where it stopped. Lists not started yet are
+    // only counted.
+    int lists = 0, waiting = 0;
+    for (const D3D12_AUTO_BREADCRUMB_NODE* n = crumbs.pHeadAutoBreadcrumbNode; n; n = n->pNext) {
       if (!n->pLastBreadcrumbValue || !n->pCommandHistory) continue;
       const UINT done = *n->pLastBreadcrumbValue;
-      if (done >= n->BreadcrumbCount) continue;  // finished: not where the GPU stopped
-      ++lists;
+      if (done >= n->BreadcrumbCount) continue;
+      if (done == 0) {
+        ++waiting;
+        continue;
+      }
+      if (++lists > 8) continue;
       std::string ops;
       for (UINT i = done > 2 ? done - 2 : 0; i < std::min(done + 3, n->BreadcrumbCount); ++i)
         ops += std::to_string(int(n->pCommandHistory[i])) + (i == done ? "* " : " ");
@@ -71,7 +79,8 @@ void LogRemoval() {
                    n->pCommandListDebugNameA ? n->pCommandListDebugNameA : "?", done,
                    n->BreadcrumbCount, ops);
     }
-    if (!lists) REXLOG_ERROR("GRAW native: DRED: no command list was left unfinished");
+    REXLOG_ERROR("GRAW native: DRED: {} command lists stopped partway, {} not started", lists,
+                 waiting);
   }
   D3D12_DRED_PAGE_FAULT_OUTPUT fault = {};
   if (SUCCEEDED(dred->GetPageFaultAllocationOutput(&fault)) && fault.PageFaultVA)
@@ -109,11 +118,11 @@ pD3DCompile D3DCompiler() {
 }
 
 D3D12Device::~D3D12Device() {
-  ID3D12Device* mine = device_.Get();
-  g_device.compare_exchange_strong(mine, nullptr);
   WaitIdle();
   if (HWND h = hwnd_.load()) PostMessageW(h, WM_CLOSE, 1, 0);
   if (window_thread_.joinable()) window_thread_.join();
+  ID3D12Device* mine = device_.Get();
+  g_device.compare_exchange_strong(mine, nullptr);
 }
 
 LRESULT CALLBACK D3D12Device::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -407,7 +416,10 @@ void D3D12Device::WaitIdle() {
   // whose resources would count as done before it is submitted.
   if (!queue_ || !idle_fence_ || !idle_event_) return;
   const uint64_t v = ++idle_fence_value_;
-  if (FAILED(queue_->Signal(idle_fence_.Get(), v)) || idle_fence_->GetCompletedValue() >= v) return;
+  if (Failed(queue_->Signal(idle_fence_.Get(), v), "idle Signal")) return;
+  const uint64_t completed = idle_fence_->GetCompletedValue();
+  if (completed == UINT64_MAX) LogRemoval();  // a removed device's fences read all ones
+  if (completed >= v) return;
   idle_fence_->SetEventOnCompletion(v, idle_event_.get());
   WaitForSingleObject(idle_event_.get(), INFINITE);
 }
@@ -462,7 +474,6 @@ bool D3D12Device::EndFrame(bool present, std::span<ID3D12CommandList* const> fir
   end_frame_times_.submit_ns = t1 - t0;
   end_frame_times_.present_ns = NowNs() - t1;
   if (Failed(hr, "Present")) {
-    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) LogRemoval();
     return false;
   }
   end_frame_times_.presented = shown;
