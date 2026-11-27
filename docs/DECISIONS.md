@@ -51,3 +51,13 @@ Every change goes through a pull request into `main`, reviewed with a code revie
 tested code: a release is a pull request from `main` into `prod` (a merge commit, so the two stay in step), tagged on
 `prod`. Both branches are protected. Builds from `main` between releases are pre-releases. Open work is tracked in
 GitHub issues.
+
+## Shader recipes
+
+First-run shader stutter is handled like COGBox does for Gears: recipes recorded in playtests name the pipelines a game
+needs, and the shaders come from the player's own `NewYetiShadersX360.sdf` at start-up. A recipe holds shader hashes,
+translation variants and render state. Drawn shaders that the SDK patched when bound (vertex fetches, texture fetch
+fields) are stored as the disc entry's index and, per changed dword, the XOR with the player's copy: only the bits of
+the fields set at bind, never instruction words. Every rebuilt shader is checked against its recorded hash. Recipe
+files are kept out of the repository (`private/recipes/`); whether releases ship them is the owner's call, and
+`tools/release.ps1` includes them only when they are there.
