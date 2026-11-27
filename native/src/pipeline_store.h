@@ -62,9 +62,9 @@ class PipelineStore {
   // loaded_pipelines() yet. Returns how many were added. Call after Open.
   size_t AddRecipes(const std::filesystem::path& file, uint32_t key_version);
 
-  // A recipe file's vertex shader record ('V'): the drawn shader is the game's shader at `entry` in
-  // NewYetiShadersX360.sdf with these dwords replaced (its vertex fetches, patched for the layout
-  // bound). nullptr if the file had none for `hash`.
+  // A recipe file's patched shader record ('V'): the drawn shader is the game's shader at `entry`
+  // in NewYetiShadersX360.sdf with these dwords replaced (fetch instructions patched when bound:
+  // vertex fetches for the layout, texture fetch fields). nullptr if the file had none for `hash`.
   struct VertexPatch {
     uint32_t entry;
     std::vector<std::pair<uint32_t, uint32_t>> dwords;  // index, value as in guest memory

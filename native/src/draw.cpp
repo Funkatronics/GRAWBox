@@ -505,7 +505,7 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   DiscShaders disc;
   uint32_t prewarm_warm_only = 0;  // recipes whose pixel stage was warmed with a stand-in VS
   uint32_t prewarm_no_shader = 0;  // recipes whose shaders are in neither the store nor the files
-  // Vertex shaders rebuilt from the game's files by a recipe's patch, and patches whose result
+  // Shaders rebuilt from the game's files by a recipe's patch (per recipe), and patches whose result
   // did not hash to the recorded shader (a different title update or .sdf).
   uint32_t prewarm_patched = 0, prewarm_patch_mismatch = 0;
   // What made the pipelines created while running new (logged, kNewPipelineLog lines): a
@@ -1644,12 +1644,11 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
     const DiscShaders::Shader* d = disc.Find(hash);
     if (d && d->pixel == (type == xenos::ShaderType::kPixel))
       return shaders.Load(type, d->ucode.data(), uint32_t(d->ucode.size()));
-    // A drawn vertex shader: the game's shader with its vertex fetches patched as recorded, used
-    // only if the result is exactly the recorded shader.
-    if (type != xenos::ShaderType::kVertex) return nullptr;
+    // A shader patched when bound (vertex fetches, texture fetch fields): the game's shader with
+    // the dwords a recipe recorded, used only if the result is exactly the recorded shader.
     const PipelineStore::VertexPatch* patch = store.recipe_vertex(hash);
     const DiscShaders::Shader* base = patch ? disc.Entry(patch->entry) : nullptr;
-    if (!base || base->pixel) return nullptr;
+    if (!base || base->pixel != (type == xenos::ShaderType::kPixel)) return nullptr;
     std::vector<uint32_t> ucode = base->ucode;
     for (const auto& [index, value] : patch->dwords) {
       if (index >= ucode.size()) return nullptr;
@@ -1711,7 +1710,7 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
   if (prewarm_next < list.size()) return;
   REXLOG_INFO(
       "GRAW native pipelines: prewarm queued {} pipelines ({} only to warm a pixel shader from the "
-      "game's files, {} failed, {} of them for want of a shader; {} with their vertex shader rebuilt from the "
+      "game's files, {} failed, {} of them for want of a shader; {} shaders rebuilt from the "
       "game's files, {} patches not matching) in {:.1f} ms over {} frames",
       list.size() - prewarm_failed.load(), prewarm_warm_only, prewarm_failed.load(),
       prewarm_no_shader, prewarm_patched, prewarm_patch_mismatch, prewarm_ms, prewarm_frames);

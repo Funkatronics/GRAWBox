@@ -3,10 +3,11 @@
 # recipe names its shaders by hash, so the file holds no game code; the shaders come from the
 # player's own files at start-up (native/src/disc_shaders.h). Format: native/src/pipeline_store.cpp.
 #
-# With -Shaders (the game's NewYetiShadersX360.sdf), also vertex shader records ('V'): a drawn vertex
-# shader is a disc one with its vertex fetch instructions patched for the vertex layout bound, so the
-# record names the disc entry (its index in the file) and the dwords that differ (a few fetch fields
-# each), and the game rebuilds the drawn shader, checked against its hash, for a complete pipeline.
+# With -Shaders (the game's NewYetiShadersX360.sdf), also patched shader records ('V'): a drawn shader
+# is often a disc one with some fetch instructions patched when bound (vertex fetches for the vertex
+# layout, texture fetch fields in pixel shaders), so the record names the disc entry (its index in
+# the file) and the dwords that differ, and the game rebuilds the drawn shader, checked against its
+# hash, for a complete pipeline. Shaders on the disc as drawn need no record.
 #   tools/make_recipes.ps1 -Out <grawbox-recipes.bin> -Stores <pipelines.bin>... [-Shaders <.sdf>]
 [CmdletBinding()]
 param(
@@ -22,10 +23,10 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.IO;
-public static class VertexPatches {
+public static class ShaderPatches {
     static uint Be(byte[] d, int p) { return (uint)(d[p] << 24 | d[p + 1] << 16 | d[p + 2] << 8 | d[p + 3]); }
-    // The .sdf's vertex shaders by entry index, as big-endian bytes (disc_shaders.cpp's layout).
-    public static Dictionary<int, byte[]> DiscVertex(byte[] sdf) {
+    // The .sdf's shaders of one type by entry index, as big-endian bytes (disc_shaders.cpp's layout).
+    public static Dictionary<int, byte[]> Disc(byte[] sdf, bool pixel) {
         var result = new Dictionary<int, byte[]>();
         if (sdf.Length < 24 || sdf[0] != 'S' || sdf[1] != 'D' || sdf[2] != 'F' || sdf[3] != 'X') return result;
         uint count = Be(sdf, 0x10);
@@ -36,7 +37,7 @@ public static class VertexPatches {
             pos = at + (long)size;
             if (pos > sdf.Length || size < 28) continue;
             uint magic = Be(sdf, at);
-            if ((magic & 1) == 0) continue;  // pixel
+            if (((magic & 1) == 0) != pixel) continue;
             long offset = Be(sdf, at + 4);
             uint bytes = Be(sdf, at + 8);
             if ((magic & ~1u) == 0x102A1100u) {
@@ -52,8 +53,8 @@ public static class VertexPatches {
         }
         return result;
     }
-    // A V record per drawn vertex shader that pairs with a disc one of the same length (the fewest
-    // differing dwords, at most maxDiff): tag, hash, entry index, count, then (dword index, value).
+    // A V record per drawn shader that pairs with a disc one of the same type and length (the fewest
+    // differing dwords, 1 to maxDiff): tag, hash, entry index, count, then (dword index, value).
     public static byte[] Records(Dictionary<ulong, byte[]> drawn, Dictionary<int, byte[]> disc, int maxDiff,
                                  out int paired, out int dwords) {
         var output = new MemoryStream();
@@ -69,7 +70,7 @@ public static class VertexPatches {
                     if (code[k] != d.Value[k] || code[k + 1] != d.Value[k + 1] || code[k + 2] != d.Value[k + 2] || code[k + 3] != d.Value[k + 3]) ++diff;
                 if (diff < bestDiff) { bestDiff = diff; best = d.Key; }
             }
-            if (best < 0 || bestDiff > maxDiff) continue;
+            if (best < 0 || bestDiff == 0 || bestDiff > maxDiff) continue;  // 0: on the disc as drawn
             byte[] src = disc[best];
             w.Write((uint)'V');
             w.Write(kv.Key);
@@ -91,7 +92,9 @@ $header = $null
 $seen = [System.Collections.Generic.HashSet[string]]::new()
 $records = [System.IO.MemoryStream]::new()
 $sha = [System.Security.Cryptography.SHA1]::Create()
-$vertex = [System.Collections.Generic.Dictionary[uint64, byte[]]]::new()  # drawn vertex shaders by hash
+# Drawn shaders by type (xenos::ShaderType: 0 vertex, 1 pixel), then hash.
+$drawn = @{ 0 = [System.Collections.Generic.Dictionary[uint64, byte[]]]::new()
+            1 = [System.Collections.Generic.Dictionary[uint64, byte[]]]::new() }
 $count = 0
 foreach ($store in $Stores) {
     $data = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $store))
@@ -110,10 +113,10 @@ foreach ($store in $Stores) {
             $hash = [BitConverter]::ToUInt64($data, $pos + 8)
             $bytes = 4 * [BitConverter]::ToUInt32($data, $pos + 16)
             if ($pos + 20 + $bytes -gt $data.Length) { break }
-            if ($type -eq 0 -and -not $vertex.ContainsKey($hash)) {  # xenos::ShaderType::kVertex
+            if ($type -le 1 -and -not $drawn[[int]$type].ContainsKey($hash)) {
                 $code = [byte[]]::new($bytes)
                 [Array]::Copy($data, $pos + 20, $code, 0, $bytes)
-                $vertex[$hash] = $code
+                $drawn[[int]$type][$hash] = $code
             }
             $pos += 20 + $bytes
         } elseif ($tag -eq [uint32][char]'P') {
@@ -127,11 +130,14 @@ foreach ($store in $Stores) {
 }
 $note = ''
 if ($Shaders) {
-    $disc = [VertexPatches]::DiscVertex([IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $Shaders)))
-    $paired = 0; $dwords = 0
-    $v = [VertexPatches]::Records($vertex, $disc, 32, [ref]$paired, [ref]$dwords)
-    $records.Write($v, 0, $v.Length)
-    $note = ", $paired of $($vertex.Count) vertex shaders paired with the game's ($dwords patched dwords)"
+    $sdf = [IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $Shaders))
+    foreach ($type in 0, 1) {
+        $paired = 0; $dwords = 0
+        $v = [ShaderPatches]::Records($drawn[$type], [ShaderPatches]::Disc($sdf, $type -eq 1), 32,
+                                      [ref]$paired, [ref]$dwords)
+        $records.Write($v, 0, $v.Length)
+        $note += ", $paired of $($drawn[$type].Count) $(('vertex', 'pixel')[$type]) shaders as patches ($dwords dwords)"
+    }
 }
 $file = [IO.File]::Create($Out)
 try {
