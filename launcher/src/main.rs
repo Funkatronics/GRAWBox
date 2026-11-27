@@ -212,9 +212,13 @@ impl App {
                                 // F10 in the game writes a report; this packs it and opens the issue form.
                                 if ui.small_button("Report a problem").clicked() {
                                     match report::pack(g, &settings::path()) {
-                                        Ok(zip) => {
+                                        Ok((zip, used)) => {
                                             report::show(&zip, g);
-                                            self.message = Some((true, format!("Report saved: {}. Drag it into the issue form that just opened.", zip.display())));
+                                            let holds = match used {
+                                                Some(name) => format!("the F10 report from {name}"),
+                                                None => "the end of the log (no F10 report in the last 30 minutes)".into(),
+                                            };
+                                            self.message = Some((true, format!("Report saved with {holds}: {}. Drag it into the issue form.", zip.display())));
                                         }
                                         Err(e) => self.error(format!("The report could not be made: {e}")),
                                     }

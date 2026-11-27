@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <chrono>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -64,9 +65,13 @@ using present_debug::WritePng;
 
 namespace {
 
-// A screenshot request (grawbox_native_request_screenshot): the next presented frame's file.
+// Screenshot requests (grawbox_native_request_screenshot): a request waits in g_shot until a frame
+// claims it (CaptureRequested, once), then in g_shot_claimed until that frame is armed. One not
+// claimed within 2 s (the emulated renderer presenting meanwhile) is dropped, so it can't land in
+// a later frame and an older report.
 std::mutex g_shot_mutex;
-std::filesystem::path g_shot;
+std::filesystem::path g_shot, g_shot_claimed;
+std::chrono::steady_clock::time_point g_shot_time;
 
 // The display controller's gamma ramp: gamma_ramp.h.
 constexpr uint32_t kRampSlotBytes = kPwlWords * 4;  // a multiple of the 256-byte CBV alignment
@@ -229,10 +234,14 @@ struct Presenter::Impl {
   // Copies the guest's current ramp of the mode into the frame's slot; false without one.
   bool WriteRamp(RampMode mode, uint32_t slot);
   bool CaptureRequested(uint64_t frame);
+  bool DebugCaptureRequested(uint64_t frame);  // F12, capture.request, --graw_native_capture_frame
   // A capture with the Xenos copy ended (taken or given up): the guest thread runs on.
   void ReleaseCapture() {
     if (capture.xenos) HoldFullReadback(false);
     capture_holding.store(false, std::memory_order_release);
+    // A dropped screenshot request must not be written by a later capture (into an older report).
+    if (!capture.shot.empty()) REXLOG_WARN("GRAW native screenshot: frame not captured, dropped");
+    capture.shot.clear();
   }
   // With the Xenos copy: waits for the frame, holds the guest thread while the plugin finishes
   // it, reads both images and writes the PNGs and their PSNR.
@@ -329,10 +338,20 @@ bool Presenter::Impl::WriteRamp(RampMode mode, uint32_t slot) {
 }
 
 bool Presenter::Impl::CaptureRequested(uint64_t frame) {
-  {
-    std::lock_guard lock(g_shot_mutex);
-    if (!g_shot.empty()) return true;  // a screenshot (grawbox_native_request_screenshot)
+  if (DebugCaptureRequested(frame)) return true;  // a screenshot waits a frame for it
+  std::lock_guard lock(g_shot_mutex);
+  if (g_shot.empty()) return false;
+  if (std::chrono::steady_clock::now() - g_shot_time > std::chrono::seconds(2)) {
+    REXLOG_WARN("GRAW native screenshot: not taken within 2 s, dropped");
+    g_shot.clear();
+    return false;
   }
+  g_shot_claimed = std::move(g_shot);
+  g_shot.clear();
+  return true;
+}
+
+bool Presenter::Impl::DebugCaptureRequested(uint64_t frame) {
   const int32_t at = REXCVAR_GET(graw_native_capture_frame);
   bool want = at >= 0 && frame == uint64_t(at);
   if (capture_dir.empty()) return want;
@@ -598,8 +617,8 @@ void Presenter::Impl::OnSwap(const SwapCall& swap, bool shown) {
     c.armed = true;
     {
       std::lock_guard lock(g_shot_mutex);
-      c.shot = std::move(g_shot);
-      g_shot.clear();
+      c.shot = std::move(g_shot_claimed);
+      g_shot_claimed.clear();
     }
     c.xenos = c.shot.empty() && REXCVAR_GET(graw_native_capture_xenos);
     if (c.xenos) {
@@ -680,4 +699,5 @@ GRAWBOX_NATIVE_API void grawbox_native_request_screenshot(const char* utf8_path)
   const std::string s(utf8_path);
   std::lock_guard lock(graw::native::g_shot_mutex);
   graw::native::g_shot = std::filesystem::path(std::u8string(s.begin(), s.end()));
+  graw::native::g_shot_time = std::chrono::steady_clock::now();
 }
