@@ -32,6 +32,11 @@ class DiscShaders {
     auto it = shaders_.find(hash);
     return it == shaders_.end() ? nullptr : &it->second;
   }
+  // The shader at `index` among the file's entries (recipes' vertex patches name it so).
+  const Shader* Entry(uint32_t index) const {
+    auto it = entries_.find(index);
+    return it == entries_.end() ? nullptr : Find(it->second);
+  }
   // A vertex shader from the file, to stand in for a pipeline's own (nullptr if none).
   const Shader* stand_in_vertex() const { return stand_in_; }
   size_t pixel_count() const { return pixel_; }
@@ -39,6 +44,7 @@ class DiscShaders {
 
  private:
   std::unordered_map<uint64_t, Shader> shaders_;
+  std::unordered_map<uint32_t, uint64_t> entries_;  // entry index -> hash
   const Shader* stand_in_ = nullptr;
   size_t pixel_ = 0;
 };

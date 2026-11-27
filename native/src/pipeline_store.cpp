@@ -16,6 +16,8 @@ namespace {
 constexpr char kMagic[4] = {'P', '4', 'P', 'S'};
 constexpr uint32_t kFormat = 1;
 constexpr uint32_t kShaderTag = 'S', kPipelineTag = 'P';
+// Recipe files only (tools/make_recipes.ps1): a drawn vertex shader as a patched game shader.
+constexpr uint32_t kVertexTag = 'V';
 
 struct Header {
   char magic[4];
@@ -181,11 +183,25 @@ size_t PipelineStore::AddRecipes(const std::filesystem::path& file, uint32_t key
         loaded_pipelines_.push_back(std::move(p));
         ++added;
       }
+    } else if (tag == kVertexTag) {
+      uint64_t hash;
+      uint32_t entry, n;
+      if (!take(&hash, 8) || !take(&entry, 4) || !take(&n, 4) || n > 4096 ||
+          data.size() - pos < size_t(n) * 8)
+        break;
+      VertexPatch patch{entry, {}};
+      patch.dwords.resize(n);
+      for (auto& [index, value] : patch.dwords) {
+        take(&index, 4);
+        take(&value, 4);
+      }
+      recipe_vertex_.emplace(hash, std::move(patch));
     } else {
       break;
     }
   }
-  REXLOG_INFO("GRAW native pipelines: {} recipes added from {}", added, file.string());
+  REXLOG_INFO("GRAW native pipelines: {} recipes and {} vertex shader patches added from {}", added,
+              recipe_vertex_.size(), file.string());
   return added;
 }
 
