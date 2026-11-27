@@ -62,3 +62,5 @@ GRAWBOX_NATIVE_API void grawbox_native_call(uint8_t* base, const GrawboxCall* ca
 GRAWBOX_NATIVE_API bool grawbox_native_drawing();
 GRAWBOX_NATIVE_API bool grawbox_native_start(const GrawboxHost* host, const GrawboxTitle* title);
 GRAWBOX_NATIVE_API void grawbox_native_request_switch();
+// Writes the next presented frame as a PNG to `utf8_path` (playtest reports).
+GRAWBOX_NATIVE_API void grawbox_native_request_screenshot(const char* utf8_path);

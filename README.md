@@ -15,6 +15,11 @@ Known issues are in [docs/STATUS.md](docs/STATUS.md).
 
 Needs 64-bit Windows and a graphics card with Direct3D 12.
 
+Something wrong? Press **F10** in the game right when it happens: it saves a report (the end of the
+log, a screenshot, your PC's Windows and graphics versions; your user name and folders are removed).
+Then **Report a problem** on the game's card in the launcher packs it with your settings and saves
+and opens a new GitHub issue, where you drag in the zip.
+
 ## No game files
 
 This repository contains no game executables, assets, title updates, artwork, keys or translated

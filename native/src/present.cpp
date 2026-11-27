@@ -1,5 +1,6 @@
 // GRAW native renderer (ported from pgr4-native 8ea20d5, MIT; see native/README.md): Swap -> debug window, front buffer captures.
 // See present.h.
+#include "grawbox_native.h"
 #include "present.h"
 
 #include "d3d12_backend.h"
@@ -25,6 +26,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -61,6 +63,10 @@ using present_debug::ToRgb;
 using present_debug::WritePng;
 
 namespace {
+
+// A screenshot request (grawbox_native_request_screenshot): the next presented frame's file.
+std::mutex g_shot_mutex;
+std::filesystem::path g_shot;
 
 // The display controller's gamma ramp: gamma_ramp.h.
 constexpr uint32_t kRampSlotBytes = kPwlWords * 4;  // a multiple of the 256-byte CBV alignment
@@ -192,6 +198,7 @@ struct Presenter::Impl {
 
   struct Capture {
     bool armed = false;  // requested: capture the next shown frame
+    std::filesystem::path shot;  // a screenshot request's file: written there, no Xenos copy
     bool xenos = true;   // with the Xenos copy (--graw_native_capture_xenos): full readback held
     bool pending = false;
     uint64_t frame = 0, fence = 0;
@@ -322,6 +329,10 @@ bool Presenter::Impl::WriteRamp(RampMode mode, uint32_t slot) {
 }
 
 bool Presenter::Impl::CaptureRequested(uint64_t frame) {
+  {
+    std::lock_guard lock(g_shot_mutex);
+    if (!g_shot.empty()) return true;  // a screenshot (grawbox_native_request_screenshot)
+  }
   const int32_t at = REXCVAR_GET(graw_native_capture_frame);
   bool want = at >= 0 && frame == uint64_t(at);
   if (capture_dir.empty()) return want;
@@ -370,9 +381,14 @@ void Presenter::Impl::WriteCapture() {
   if (c.writer.joinable()) c.writer.join();
   c.writer = std::thread([readback = std::move(c.readback), pitch = c.footprint.Footprint.RowPitch,
                           w = c.width, h = c.height, mapping = c.mapping, rgb10a2 = c.rgb10a2,
-                          frame = c.frame, dir = capture_dir] {
+                          frame = c.frame, dir = capture_dir, shot = std::move(c.shot)] {
     std::vector<uint8_t> rgb;
     if (!ReadbackRgb(readback.Get(), pitch, w, h, mapping, rgb10a2, &rgb)) return;
+    if (!shot.empty()) {
+      const bool ok = WritePng(shot.c_str(), rgb, w, h);
+      REXLOG_INFO("GRAW native screenshot: frame {} {}x{}{}", frame, w, h, ok ? "" : ", write failed");
+      return;
+    }
     const std::string name = "f" + std::to_string(frame) + "-native.png";
     const bool ok = WritePng((dir / name).c_str(), rgb, w, h);
     REXLOG_INFO("GRAW native capture: frame {} {}x{} ({}\\{}{})", frame, w, h, dir.string(), name,
@@ -580,7 +596,12 @@ void Presenter::Impl::OnSwap(const SwapCall& swap, bool shown) {
       (swap.capture_request < 0 ? CaptureRequested(r.frame_index()) : swap.capture_request > 0)) {
     if (glitch.on()) glitch.Mark(r.frame_index());
     c.armed = true;
-    c.xenos = REXCVAR_GET(graw_native_capture_xenos);
+    {
+      std::lock_guard lock(g_shot_mutex);
+      c.shot = std::move(g_shot);
+      g_shot.clear();
+    }
+    c.xenos = c.shot.empty() && REXCVAR_GET(graw_native_capture_xenos);
     if (c.xenos) {
       capture_holding.store(true, std::memory_order_release);
       HoldFullReadback(true);
@@ -653,3 +674,10 @@ void Presenter::AfterEndFrame() {
 }
 
 }  // namespace graw::native
+
+GRAWBOX_NATIVE_API void grawbox_native_request_screenshot(const char* utf8_path) {
+  if (!utf8_path || !*utf8_path) return;
+  const std::string s(utf8_path);
+  std::lock_guard lock(graw::native::g_shot_mutex);
+  graw::native::g_shot = std::filesystem::path(std::u8string(s.begin(), s.end()));
+}
