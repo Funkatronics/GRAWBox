@@ -37,6 +37,8 @@ pub struct Settings {
     pub vsync: bool,
     /// Wait for shaders seen for the first time (no draws left out, can stutter).
     pub shader_wait: bool,
+    /// Build the known shaders at start, before play.
+    pub prepare_shaders: bool,
     /// Percent of the game's own.
     pub field_of_view: u32,
     /// 16:9, 21:9, 32:9 or display.
@@ -66,6 +68,7 @@ impl Default for Settings {
             fullscreen: true,
             vsync: true,
             shader_wait: true,
+            prepare_shaders: true,
             field_of_view: 100,
             aspect_ratio: "16:9".into(),
             hud_layout: "centered".into(),
@@ -196,6 +199,7 @@ impl Settings {
             format!("--gpu.resolution_scale_y={}", self.scale),
             format!("--native.vsync={}", self.vsync),
             format!("--native.shader_wait={}", self.shader_wait),
+            format!("--native.prepare_shaders={}", self.prepare_shaders),
             format!("--native.field_of_view={}", self.field_of_view),
             format!("--native.aspect_ratio={}", self.aspect_ratio),
             format!("--native.hud_layout={}", self.hud_layout),

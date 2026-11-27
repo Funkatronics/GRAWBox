@@ -261,6 +261,7 @@ impl App {
                 });
                 row(ui, "Fullscreen", "", |ui| { ui.checkbox(&mut s.fullscreen, ""); });
                 row(ui, "VSync", "", |ui| { ui.checkbox(&mut s.vsync, ""); });
+                row(ui, "Prepare shaders at start", "Native renderer. Builds the shaders the game is known to use before play starts, with a progress bar. The first start takes longest; later starts reuse the cache.", |ui| { ui.checkbox(&mut s.prepare_shaders, ""); });
                 row(ui, "Wait for new shaders", "Native renderer. On: the game waits briefly for shaders it hasn't built yet, so it can stutter the first time a new effect or area appears. Off: smoother, and new things can appear a moment late.", |ui| { ui.checkbox(&mut s.shader_wait, ""); });
                 row(ui, "Field of view", "How much of the world you see. 100 % is the game's own.", |ui| {
                     ui.add(egui::Slider::new(&mut s.field_of_view, 75..=150).step_by(5.0).suffix(" %"));
