@@ -5,7 +5,7 @@
 // suspended only its registers and a copy of its stack are read (nothing that takes a lock it might
 // hold); after resuming, each sample is counted by where the thread was: a translated game function
 // (by kPPCFuncMappings), or else its module with, from a scan of the copied stack for return
-// addresses, the first of our modules and the first game function below it (approximate). A frame
+// addresses, the first of our modules and up to three game functions below it (approximate). A frame
 // of 100 ms or more gets one log line at the next Swap, at most 20 a minute:
 //   GRAW stall: frame took 412 ms, 132 samples of the game thread after 50 ms:
 //   ntdll.dll < grawbox_native.dll < sub_82113AB8 99%, ...

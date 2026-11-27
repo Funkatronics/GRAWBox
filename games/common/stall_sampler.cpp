@@ -158,18 +158,23 @@ void Sampler() {
     if (place.empty()) {
       place = ModuleName(uintptr_t(c.Rip));
       if (place.empty()) place = "unknown";
-      std::string caller, game;
-      for (size_t i = 0; i < words && game.empty(); ++i) {
+      // Up to kGameDepth game functions: a wait wrapper names only itself, its callers say what
+      // the game waits for.
+      constexpr int kGameDepth = 3;
+      std::string caller;
+      std::vector<std::string> games;
+      for (size_t i = 0; i < words && games.size() < kGameDepth; ++i) {
         const uintptr_t v = stack[i];
         if (v < 0x10000) continue;
-        game = GameFunction(s, v);
-        if (game.empty() && caller.empty()) {
+        if (std::string g = GameFunction(s, v); !g.empty()) {
+          if (games.empty() || games.back() != g) games.push_back(std::move(g));
+        } else if (games.empty() && caller.empty()) {
           const std::string m = ModuleName(v);
           if (!m.empty() && m != place && !SystemModule(m)) caller = m;
         }
       }
       if (!caller.empty()) place += " < " + caller;
-      if (!game.empty()) place += " < " + game;
+      for (const std::string& g : games) place += " < " + g;
     }
     std::lock_guard lock(s.mutex);
     // Only if the frame is still the one being sampled (no swap in between).
