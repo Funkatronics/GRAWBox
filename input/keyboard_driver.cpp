@@ -49,22 +49,30 @@ class Mouse {
     if (const DWORD id = id_) PostThreadMessageW(id, WM_QUIT, 0, 0);
     thread_.join();
   }
-  // The wheel as a button: each notch one press, held for one poll and released for the next, so
-  // quick notches give as many presses (one held window merged them). `poll` counts the driver's
-  // polls: several controls may ask in one poll and must see the same state. Under the driver's
-  // lock.
-  bool Wheel(bool up, uint64_t poll) {
+  // The wheel as a button: each notch one press, held 40 ms and released at least 30 ms before the
+  // next, so quick notches give as many presses (at most two waiting) and every read of the pad in
+  // that time sees the press. Under the driver's lock.
+  bool Wheel(bool up) {
     Button& b = wheel_[up];
-    if (b.poll != poll) {
-      b.poll = poll;
-      if (b.pressed) {
+    const ULONGLONG now = GetTickCount64();
+    if (b.pressed) {
+      if (now - b.since >= 40) {
         b.pressed = false;
-      } else if (b.notches > 0) {
-        --b.notches;
-        b.pressed = true;
+        b.since = now;
       }
+    } else if (now - b.since >= 30 && b.notches > 0) {
+      --b.notches;
+      b.pressed = true;
+      b.since = now;
     }
     return b.pressed;
+  }
+  // Notches made while the game was not in front are not the game's. Under the driver's lock.
+  void DropWheel() {
+    for (Button& b : wheel_) {
+      b.notches = 0;
+      b.pressed = false;
+    }
   }
   void Take(long& dx, long& dy) {
     dx = dx_.exchange(0);
@@ -85,10 +93,17 @@ class Mouse {
           self->dy_ += raw.data.mouse.lLastY;
           if (raw.data.mouse.usButtonFlags & RI_MOUSE_WHEEL) {
             // A notch is WHEEL_DELTA; fine-resolution wheels send less, counted once whole.
+            // A part left from long ago or the other way is not part of this notch.
             const int delta = SHORT(raw.data.mouse.usButtonData);
+            const ULONGLONG now = GetTickCount64();
+            if (now - self->rest_at_ > 500) self->rest_up_ = self->rest_down_ = 0;
+            self->rest_at_ = now;
+            (delta > 0 ? self->rest_down_ : self->rest_up_) = 0;
             int& rest = delta > 0 ? self->rest_up_ : self->rest_down_;
             rest += std::abs(delta);
-            self->wheel_[delta > 0].notches += rest / WHEEL_DELTA;
+            std::atomic<int>& notches = self->wheel_[delta > 0].notches;
+            for (int n = notches; !notches.compare_exchange_weak(n, std::min(n + rest / WHEEL_DELTA, 2));) {
+            }
             rest %= WHEEL_DELTA;
           }
         }
@@ -116,11 +131,13 @@ class Mouse {
   std::atomic<long> dx_ = 0, dy_ = 0;
   struct Button {
     std::atomic<int> notches = 0;  // not yet pressed (the mouse thread adds, polls take)
-    uint64_t poll = 0;             // the last poll that asked (under the driver's lock)
+    ULONGLONG since = 0;           // when pressed or released last (under the driver's lock)
     bool pressed = false;
   };
   Button wheel_[2];                // [0] down, [1] up
-  int rest_up_ = 0, rest_down_ = 0;  // fine-resolution wheel parts of a notch (mouse thread)
+  // Fine-resolution wheel parts of a notch, and when the wheel turned last (mouse thread).
+  int rest_up_ = 0, rest_down_ = 0;
+  ULONGLONG rest_at_ = 0;
   std::atomic<DWORD> id_ = 0;
   std::thread thread_;
 };
@@ -141,6 +158,9 @@ class Driver final : public IInputDriver {
   }
 
   void Shutdown() override {
+    // Under the lock, and no polls subclass the window after this one.
+    std::lock_guard lock(mutex_);
+    shut_down_ = true;
     mouse_.reset();
     Lock(nullptr);
     // The window keeps working without us: its own procedure back, if it is still ours.
@@ -184,7 +204,6 @@ class Driver final : public IInputDriver {
 
   Result<PadState> GetDeviceState(PadDeviceID) override {
     std::lock_guard lock(mutex_);
-    ++poll_;
     PadState state;
     // Only while one of this program's windows has the focus.
     HWND window = GetForegroundWindow();
@@ -199,6 +218,7 @@ class Driver final : public IInputDriver {
     last_ = now;
     if (!focused) {
       rate_x_ = rate_y_ = 0;
+      if (mouse_) mouse_->DropWheel();
       return state;
     }
     for (size_t i = 0; i < kControlCount; ++i)
@@ -237,7 +257,7 @@ class Driver final : public IInputDriver {
     return std::any_of(keys_[control].begin(), keys_[control].end(),
                        [this](int key) {
                          if (key == kWheelUp || key == kWheelDown)
-                           return mouse_ && mouse_->Wheel(key == kWheelUp, poll_);
+                           return mouse_ && mouse_->Wheel(key == kWheelUp);
                          return (GetAsyncKeyState(key) & 0x8000) != 0;
                        });
   }
@@ -271,14 +291,22 @@ class Driver final : public IInputDriver {
       previous_ = nullptr;
     }
     // Only the game's own window: the process's largest visible top-level window, not a dialog
-    // that happened to have the focus first.
-    if (window && !subclassed_ && window == GameWindow()) {
-      previous_ = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC));
-      SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&HidePointer));
-      subclassed_ = window;
-      PostMessageW(window, WM_SETCURSOR, WPARAM(window), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    // that happened to have the focus first. Looked for when the focus moves, and each second (the
+    // game's window can have the focus before it is shown).
+    if (window && !subclassed_ && !shut_down_ &&
+        (window != checked_ || GetTickCount64() - checked_at_ > 1000)) {
+      checked_ = window;
+      checked_at_ = GetTickCount64();
+      if (window == GameWindow()) {
+        previous_ = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC));
+        SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&HidePointer));
+        subclassed_ = window;
+        PostMessageW(window, WM_SETCURSOR, WPARAM(window), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+      }
     }
-    if (window) {
+    if (!window) checked_ = nullptr;
+    // The pointer is kept in the game's window only, never in a dialog of the process.
+    if (window && window == subclassed_) {
       RECT r;
       if (!GetClientRect(window, &r)) return;
       POINT a = {r.right - 1, r.bottom - 1};
@@ -293,7 +321,9 @@ class Driver final : public IInputDriver {
   }
 
   std::mutex mutex_;
-  uint64_t poll_ = 0;  // GetDeviceState calls (Mouse::Wheel), under mutex_
+  bool shut_down_ = false;     // Shutdown ran: no more subclassing (under mutex_)
+  HWND checked_ = nullptr;     // the focused window last looked at by Lock, and when
+  ULONGLONG checked_at_ = 0;
   std::array<std::vector<int>, kControlCount> keys_;
   std::unique_ptr<Mouse> mouse_;
   std::chrono::steady_clock::time_point last_;

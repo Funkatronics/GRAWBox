@@ -411,21 +411,25 @@ bool SdlPadUsed(bool* changed) {
     int16_t (*axis)(void*, int) = nullptr;
     void (*free)(void*) = nullptr;
   };
-  static const Sdl sdl = [] {
-    Sdl s;
-    if (HMODULE m = GetModuleHandleW(L"SDL3.dll")) {
-      auto get = [m](auto& fn, const char* name) {
-        fn = reinterpret_cast<std::remove_reference_t<decltype(fn)>>(GetProcAddress(m, name));
-      };
-      get(s.get_gamepads, "SDL_GetGamepads");
-      get(s.from_id, "SDL_GetGamepadFromID");
-      get(s.button, "SDL_GetGamepadButton");
-      get(s.axis, "SDL_GetGamepadAxis");
-      get(s.free, "SDL_free");
-    }
-    return s;
-  }();
-  if (!sdl.get_gamepads || !sdl.from_id || !sdl.button || !sdl.axis || !sdl.free) return false;
+  // Looked for at each call until found: the driver can load SDL after the first one.
+  static Sdl sdl;
+  static bool found = false;
+  if (!found) {
+    Sdl& s = sdl;
+    HMODULE m = GetModuleHandleW(L"SDL3.dll");
+    if (!m) m = GetModuleHandleW(L"SDL3d.dll");  // a debug build
+    if (!m) return false;
+    auto get = [m](auto& fn, const char* name) {
+      fn = reinterpret_cast<std::remove_reference_t<decltype(fn)>>(GetProcAddress(m, name));
+    };
+    get(s.get_gamepads, "SDL_GetGamepads");
+    get(s.from_id, "SDL_GetGamepadFromID");
+    get(s.button, "SDL_GetGamepadButton");
+    get(s.axis, "SDL_GetGamepadAxis");
+    get(s.free, "SDL_free");
+    found = s.get_gamepads && s.from_id && s.button && s.axis && s.free;
+    if (!found) return false;
+  }
   struct State {
     uint32_t buttons = 0;  // the 15 standard buttons (SDL_GAMEPAD_BUTTON_SOUTH ... DPAD_RIGHT)
     int16_t axes[6] = {};  // left x/y, right x/y, left/right trigger
