@@ -4,6 +4,7 @@
 mod extract;
 mod game;
 mod keyboard;
+mod report;
 mod saves;
 mod settings;
 mod sha1;
@@ -208,6 +209,16 @@ impl App {
                                 if theme::action(ui, text, free).clicked() {
                                     self.play(i);
                                 }
+                                // F10 in the game writes a report; this packs it and opens the issue form.
+                                if ui.small_button("Report a problem").clicked() {
+                                    match report::pack(g, &settings::path()) {
+                                        Ok(zip) => {
+                                            report::show(&zip, g);
+                                            self.message = Some((true, format!("Report saved: {}. Drag it into the issue form that just opened.", zip.display())));
+                                        }
+                                        Err(e) => self.error(format!("The report could not be made: {e}")),
+                                    }
+                                }
                             }
                             Ready::NoDisc | Ready::NoUpdate => {
                                 if theme::action(ui, "SET UP", true).clicked() {
@@ -222,6 +233,7 @@ impl App {
         }
         ui.add_space(6.0);
         ui.label(RichText::new("F9 in a game switches between the native and the emulated renderer.").weak());
+        ui.label(RichText::new("Something wrong? Press F10 in the game right when it happens, then Report a problem here.").weak());
     }
 
     fn graphics_tab(&mut self, ui: &mut egui::Ui) {
@@ -460,6 +472,7 @@ impl eframe::App for App {
             }
             ui.add_space(18.0);
             ui.label(RichText::new("GRAWBox").size(13.0).color(theme::TEAL_DIM));
+            ui.label(RichText::new(report::BUILD).size(11.0).color(theme::TEAL_DIM));
         });
         egui::CentralPanel::default().frame(egui::Frame::new().inner_margin(egui::Margin { left: 6, right: 26, top: 22, bottom: 10 })).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {

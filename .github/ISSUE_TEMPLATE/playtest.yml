@@ -1,0 +1,64 @@
+name: Playtest report
+description: Something went wrong or looked wrong while playing.
+title: "[Playtest] "
+labels: ["playtest"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. Press **F10** in the game right when it happens: it saves a report.
+        Then use **Report a problem** in the launcher: it packs the report into one zip and opens this page.
+        Drag that zip into the "Report file" box below.
+  - type: dropdown
+    id: game
+    attributes:
+      label: Game
+      options:
+        - Advanced Warfighter (GRAW 1)
+        - Advanced Warfighter 2 (GRAW 2)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: GRAWBox version
+      description: Shown at the bottom of the launcher, for example v0.2.0-12-gabc1234.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What went wrong, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: doing
+    attributes:
+      label: What you were doing
+      description: Mission and place, what you were doing at the moment, and the settings you changed if any.
+    validations:
+      required: true
+  - type: dropdown
+    id: again
+    attributes:
+      label: Does it happen again?
+      options:
+        - Every time
+        - Sometimes
+        - Only once so far
+        - Didn't try
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Report file
+      description: The zip from "Report a problem" in the launcher. It holds the log, a screenshot, your settings and saves, with your user name and folders removed.
+    validations:
+      required: true
+  - type: input
+    id: video
+    attributes:
+      label: Video (optional)
+      description: A link to a clip, if you have one.

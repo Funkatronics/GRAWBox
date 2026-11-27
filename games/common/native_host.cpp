@@ -1,5 +1,7 @@
 #include "native_host.h"
 #include "stall_sampler.h"
+#include "report.h"
+#include "build_id.h"
 
 #include "../../input/keys.h"
 
@@ -15,6 +17,7 @@
 
 #include <atomic>
 #include <cctype>
+#include <cstdlib>
 #include <cwctype>
 #include <filesystem>
 #include <map>
@@ -62,6 +65,28 @@ std::atomic<HWND> g_child = nullptr;
 decltype(&grawbox_native_start) g_start = nullptr;
 decltype(&grawbox_native_call) g_call = nullptr;
 decltype(&grawbox_native_request_switch) g_request_switch = nullptr;
+decltype(&grawbox_native_request_screenshot) g_request_screenshot = nullptr;  // optional
+
+// F10 in the game's window: a playtest report (report.h). Polled at each Swap.
+void PollReportKey() {
+  static bool down = false, first = true;
+  if (first) {
+    first = false;
+    REXLOG_INFO("GRAWBox build {} (F10 writes a playtest report)", GRAWBOX_BUILD);
+  }
+  DWORD process = 0;
+  GetWindowThreadProcessId(GetForegroundWindow(), &process);
+  const bool now = process == GetCurrentProcessId() && (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
+  if (now && !down) report::Write(g_request_screenshot);
+  // Unattended tests: GRAWBOX_REPORT_AT_FRAME=<n> writes one report at that Swap.
+  static const long at = [] {
+    char v[16] = {};
+    return GetEnvironmentVariableA("GRAWBOX_REPORT_AT_FRAME", v, sizeof(v)) ? std::atol(v) : -1L;
+  }();
+  static long frame = 0;
+  if (at >= 0 && frame++ == at) report::Write(g_request_screenshot);
+  down = now;
+}
 void (*g_gpu_draws)(bool) = nullptr;
 void (*g_gpu_presents)(bool) = nullptr;
 const void* (*g_gpu_gamma)(bool) = nullptr;
@@ -251,6 +276,8 @@ bool Start() {
       !Load(native, "grawbox_native_call", g_call) ||
       !Load(native, "grawbox_native_request_switch", g_request_switch))
     return false;
+  g_request_screenshot = reinterpret_cast<decltype(g_request_screenshot)>(
+      GetProcAddress(native, "grawbox_native_request_screenshot"));
   rex::kernel::ThreadState* thread = rex::kernel::ThreadState::Get();
   if (!thread || !thread->GetAddressSpace()) return false;
   g_memory = thread->GetAddressSpace();
@@ -306,7 +333,10 @@ void SetApp(rex::app::App* app) { g_app = app; }
 
 void Call(uint32_t function, PPCContext& ctx, uint8_t* base,
           void (*original)(PPCContext&, uint8_t*)) {
-  if (function == kSwap) grawbox::stall::Heartbeat();
+  if (function == kSwap) {
+    grawbox::stall::Heartbeat();
+    PollReportKey();
+  }
   static const bool started = Start();
   if (!started) {
     original(ctx, base);

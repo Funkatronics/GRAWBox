@@ -89,7 +89,7 @@ pub fn default_keys() -> BTreeMap<String, String> {
     CONTROLS.iter().map(|(n, _, k)| (n.to_string(), k.to_string())).collect()
 }
 
-fn path() -> std::path::PathBuf {
+pub fn path() -> std::path::PathBuf {
     crate::game::home().join("settings.toml")
 }
 

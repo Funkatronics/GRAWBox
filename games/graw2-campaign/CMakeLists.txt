@@ -8,9 +8,23 @@ find_package(rexglue 0.11.0 REQUIRED CONFIG)
 rexglue_project(graw2_campaign OUTPUT_DIR generated/campaign)
 
 add_executable(graw2_campaign WIN32 src/main.cpp src/native_hooks.cpp src/camera.cpp
-               ../common/native_host.cpp ../common/stall_sampler.cpp)
+               ../common/native_host.cpp ../common/stall_sampler.cpp
+               ../common/report.cpp)
 target_include_directories(graw2_campaign PRIVATE . ../common ../../native/include)
 rexglue_setup_target(graw2_campaign)
+
+# build_id.h (GRAWBOX_BUILD, from git describe), written at every build.
+add_custom_target(
+  graw2_campaign_build_id ALL
+  COMMAND ${CMAKE_COMMAND} -DOUT=${CMAKE_CURRENT_BINARY_DIR}/build_id.h
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/../common/build_id.cmake
+  BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/build_id.h
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+add_dependencies(graw2_campaign graw2_campaign_build_id)
+target_include_directories(graw2_campaign PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+# report.cpp reads the GPUs and their drivers.
+target_link_libraries(graw2_campaign PRIVATE dxgi)
 
 add_library(rexhid-keyboard SHARED ../../input/keyboard_driver.cpp)
 set_target_properties(
