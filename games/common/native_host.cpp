@@ -14,6 +14,7 @@
 #include <rex/ui/ui_system.h>
 
 #include <windows.h>
+#include <d3d12.h>
 
 #include <atomic>
 #include <cctype>
@@ -75,12 +76,35 @@ void (*ReportScreenshot())(const char*) {
                                                                          : nullptr;
 }
 
+// Device Removed Extended Data: when a renderer loses its D3D12 device, the GPU's last operations and
+// any page fault are in the log (both renderers log them). Set before either renderer makes its
+// device. GRAWBOX_DRED=0 leaves it off, for comparing frame times.
+const char* g_dred = "off";
+void EnableDred() {
+  char value[8] = {};
+  const DWORD n = GetEnvironmentVariableA("GRAWBOX_DRED", value, sizeof(value));
+  if (n && n < sizeof(value) && std::string(value) == "0") return;
+  HMODULE d3d12 = LoadLibraryW(L"d3d12.dll");
+  if (!d3d12) return;
+  using GetDebugInterface = HRESULT(WINAPI*)(REFIID, void**);
+  auto get = reinterpret_cast<GetDebugInterface>(GetProcAddress(d3d12, "D3D12GetDebugInterface"));
+  ID3D12DeviceRemovedExtendedDataSettings* dred = nullptr;
+  if (!get || FAILED(get(IID_PPV_ARGS(&dred)))) {
+    g_dred = "not available";
+    return;
+  }
+  dred->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+  dred->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+  dred->Release();
+  g_dred = "on";
+}
+
 // F10 in the game's window: a playtest report (report.h). Polled at each Swap.
 void PollReportKey() {
   static bool down = false, first = true;
   if (first) {
     first = false;
-    REXLOG_INFO("GRAWBox build {} (F10 writes a playtest report)", GRAWBOX_BUILD);
+    REXLOG_INFO("GRAWBox build {} (F10 writes a playtest report), DRED {}", GRAWBOX_BUILD, g_dred);
   }
   DWORD process = 0;
   GetWindowThreadProcessId(GetForegroundWindow(), &process);
@@ -342,7 +366,10 @@ NativeSettings& Settings() {
   return settings;
 }
 
-void SetApp(rex::app::App* app) { g_app = app; }
+void SetApp(rex::app::App* app) {
+  g_app = app;
+  EnableDred();
+}
 
 void Call(uint32_t function, PPCContext& ctx, uint8_t* base,
           void (*original)(PPCContext&, uint8_t*)) {
