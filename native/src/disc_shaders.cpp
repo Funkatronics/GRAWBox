@@ -25,6 +25,7 @@ bool DiscShaders::Load(const std::filesystem::path& file) {
   const uint32_t count = Be32(&data[0x10]);
   size_t pos = 0x18;
   std::unordered_map<uint64_t, Shader> shaders;
+  std::unordered_map<uint32_t, uint64_t> entries;
   size_t pixel = 0, bad = 0;
   for (uint32_t i = 0; i < count; ++i) {
     if (data.size() - pos < 12) break;
@@ -58,9 +59,11 @@ bool DiscShaders::Load(const std::filesystem::path& file) {
     s.pixel = !(magic & 1);
     s.ucode.resize(bytes / 4);
     std::memcpy(s.ucode.data(), c + offset, bytes);
+    entries[i] = hash;
     if (shaders.emplace(hash, std::move(s)).second && !(magic & 1)) ++pixel;
   }
   shaders_ = std::move(shaders);
+  entries_ = std::move(entries);
   pixel_ = pixel;
   stand_in_ = nullptr;
   for (const auto& [hash, s] : shaders_)

@@ -505,6 +505,10 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   DiscShaders disc;
   uint32_t prewarm_warm_only = 0;  // recipes whose pixel stage was warmed with a stand-in VS
   uint32_t prewarm_no_shader = 0;  // recipes whose shaders are in neither the store nor the files
+  // Shaders rebuilt from the game's files by a recipe's patch (each once), and patches whose result
+  // did not hash to the recorded shader (a different title update or .sdf).
+  uint32_t prewarm_patched = 0, prewarm_patch_mismatch = 0;
+  std::unordered_set<uint64_t> patch_tried;  // shader hashes a patch was tried for
   // What made the pipelines created while running new (logged, kNewPipelineLog lines): a
   // shader pair or a render state no pipeline had before, bool or texture-sign variants.
   // Counted only while those lines are logged: nothing reads them afterwards.
@@ -1639,8 +1643,27 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
         s && s->type == uint32_t(type) && !s->ucode.empty())
       return shaders.Load(type, s->ucode.data(), uint32_t(s->ucode.size()));
     const DiscShaders::Shader* d = disc.Find(hash);
-    if (!d || d->pixel != (type == xenos::ShaderType::kPixel)) return nullptr;
-    return shaders.Load(type, d->ucode.data(), uint32_t(d->ucode.size()));
+    if (d && d->pixel == (type == xenos::ShaderType::kPixel))
+      return shaders.Load(type, d->ucode.data(), uint32_t(d->ucode.size()));
+    // A shader patched when bound (vertex fetches, texture fetch fields): the game's shader with the
+    // bits a recipe recorded flipped, used only if the result is exactly the recorded shader. Once
+    // per shader: many recipes share one.
+    if (DxbcShader* loaded = shaders.FindLoaded(hash)) return loaded;
+    if (!patch_tried.insert(hash).second) return nullptr;  // failed before
+    const PipelineStore::VertexPatch* patch = store.recipe_vertex(hash);
+    const DiscShaders::Shader* base = patch ? disc.Entry(patch->entry) : nullptr;
+    if (!base || base->pixel != (type == xenos::ShaderType::kPixel)) return nullptr;
+    std::vector<uint32_t> ucode = base->ucode;
+    for (const auto& [index, bits] : patch->dwords) {
+      if (index >= ucode.size()) return nullptr;
+      ucode[index] ^= bits;  // both in guest byte order
+    }
+    if (XXH3_64bits(ucode.data(), ucode.size() * sizeof(uint32_t)) != hash) {
+      ++prewarm_patch_mismatch;
+      return nullptr;
+    }
+    ++prewarm_patched;
+    return shaders.Load(type, ucode.data(), uint32_t(ucode.size()));
   };
   do {
     const PipelineStore::Pipeline& sp = list[prewarm_next++];
@@ -1691,9 +1714,10 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
   if (prewarm_next < list.size()) return;
   REXLOG_INFO(
       "GRAW native pipelines: prewarm queued {} pipelines ({} only to warm a pixel shader from the "
-      "game's files, {} failed, {} of them for want of a shader) in {:.1f} ms over {} frames",
+      "game's files, {} failed, {} of them for want of a shader; {} shaders rebuilt from the "
+      "game's files, {} patches not matching) in {:.1f} ms over {} frames",
       list.size() - prewarm_failed.load(), prewarm_warm_only, prewarm_failed.load(),
-      prewarm_no_shader, prewarm_ms, prewarm_frames);
+      prewarm_no_shader, prewarm_patched, prewarm_patch_mismatch, prewarm_ms, prewarm_frames);
   // The last entries may have been skipped or failed after the workers finished the others.
   std::lock_guard<std::mutex> lock(pso_mutex);
   prewarm_queued = true;

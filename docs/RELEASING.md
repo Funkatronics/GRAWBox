@@ -12,7 +12,8 @@ make them: the programs are built from the owner's game files, which never leave
 GRAWBox/
   GRAWBox.exe                      the launcher
   programs/graw1/, programs/graw2/ the built game programs, the native renderer, the ReXGlue runtime,
-                                   the Visual C++ runtime, the default key files
+                                   the Visual C++ runtime, the default key files, and grawbox-recipes.bin
+                                   when private/recipes/<game>.bin exists (tools/make_recipes.ps1)
   LICENSE, README.md, OFL-Rajdhani.txt
 ```
 

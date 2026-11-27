@@ -47,6 +47,7 @@ class ShaderCache {
 
   // The loaded shader with ucode hash `hash`, or nullptr.
   const DxbcShader* Find(uint64_t hash);
+  DxbcShader* FindLoaded(uint64_t hash) { return const_cast<DxbcShader*>(Find(hash)); }
 
   const ShaderCacheStats& stats() const { return stats_; }
 
