@@ -15,7 +15,7 @@ to switch while playing.
   interrupts) without drawing or presenting (`patches/rexglue-0.11.0-host-renderer.patch`).
 - It presents into a child window over the game window, because a window takes one flip swap chain.
 - `native.renderer` = `native` (default), `emulated` or `off`. **F9** switches while playing.
-  `native.resolution_scale` = 1 to 3. `native.vsync`. `native.anisotropy` = 1 to 16. `native.haze` = fixed (default), original, off.
+  `native.resolution_scale` = 1 to 3. `native.vsync`. `native.anisotropy` = 1 to 16. `native.haze` = fixed (default), original, off. `native.shader_wait` (default true): wait up to 0.5 s for new shaders; false shows the frame without them.
   `native.haze_variant` = 1 (the games' motion) to 6 (default 3, a drift).
   `native.ambient_occlusion` = 0 to 100 (default 0). `native.sharpness` = 0 to 1. `native.mip_bias` = -2 to 2.
 - `native/src/post.cpp`, written for this project: just before the games' own haze draw it replaces the scene with the same

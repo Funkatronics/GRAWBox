@@ -46,7 +46,7 @@ $scripts = @(
     # from other hitches.
     @('NATIVE-4K-STUTTER-LOG', 'native', 3, '', 'set GRAWBOX_NATIVE_CSV=%~dp0frames.csv'),
     # The same, not waiting for new shaders (--native.shader_wait=false).
-    @('NATIVE-4K-STUTTER-LOG-NO-SHADER-WAIT', 'native', 3, '--native.shader_wait=false', 'set GRAWBOX_NATIVE_CSV=%~dp0frames.csv')
+    @('NATIVE-4K-STUTTER-LOG-NO-SHADER-WAIT', 'native', 3, '--native.shader_wait=false', 'set GRAWBOX_NATIVE_CSV=%~dp0frames-nowait.csv')
 )
 # Field of view and aspect ratio (games/*/src/camera.cpp).
 $scripts += @(
