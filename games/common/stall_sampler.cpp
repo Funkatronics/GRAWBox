@@ -36,7 +36,12 @@ struct State {
   DWORD thread_id = 0;                 // the thread that swaps
   HANDLE thread = nullptr;
   uintptr_t stack_base = 0;            // its stack's upper end (from its TEB)
-  std::map<std::string, int> samples;  // this frame's
+  // This frame's samples by where the thread was, each with the deeper game callers seen there.
+  struct Place {
+    int n = 0;
+    std::map<std::string, int> deeper;
+  };
+  std::map<std::string, Place> samples;
   // Host address -> guest function, and the bounds of the translated code.
   std::vector<std::pair<uintptr_t, uint32_t>> functions;
   uintptr_t code_begin = 0, code_end = 0;
@@ -152,28 +157,40 @@ void Sampler() {
     ResumeThread(thread);
     if (!c.Rip) continue;
     // Where it is; if that is not a game function, the first of our modules and the first game
-    // function found among the return addresses on its stack (a scan, so approximate):
-    // "ntdll.dll < rexkernel.dll < sub_82101798".
-    std::string place = GameFunction(s, uintptr_t(c.Rip));
+    // function found among the return addresses on its stack (a scan, so approximate), which
+    // group the samples: "ntdll.dll < rexkernel.dll < sub_82101798". The next game functions
+    // (callers of a wait wrapper, which say what the game waits for) are kept per group: the scan
+    // can pick up stale addresses that deep, so they must not split a group.
+    std::string place = GameFunction(s, uintptr_t(c.Rip)), deeper;
     if (place.empty()) {
       place = ModuleName(uintptr_t(c.Rip));
       if (place.empty()) place = "unknown";
-      std::string caller, game;
-      for (size_t i = 0; i < words && game.empty(); ++i) {
+      // Up to kGameDepth game functions: a wait wrapper names only itself, its callers say what
+      // the game waits for.
+      constexpr int kGameDepth = 3;
+      std::string caller;
+      std::vector<std::string> games;
+      for (size_t i = 0; i < words && games.size() < kGameDepth; ++i) {
         const uintptr_t v = stack[i];
         if (v < 0x10000) continue;
-        game = GameFunction(s, v);
-        if (game.empty() && caller.empty()) {
+        if (std::string g = GameFunction(s, v); !g.empty()) {
+          if (std::find(games.begin(), games.end(), g) == games.end()) games.push_back(std::move(g));
+        } else if (games.empty() && caller.empty()) {
           const std::string m = ModuleName(v);
           if (!m.empty() && m != place && !SystemModule(m)) caller = m;
         }
       }
       if (!caller.empty()) place += " < " + caller;
-      if (!game.empty()) place += " < " + game;
+      if (!games.empty()) place += " < " + games[0];
+      for (size_t i = 1; i < games.size(); ++i) deeper += (i > 1 ? " < " : "") + games[i];
     }
     std::lock_guard lock(s.mutex);
     // Only if the frame is still the one being sampled (no swap in between).
-    if (s.last_swap.load(std::memory_order_relaxed) == last) ++s.samples[place];
+    if (s.last_swap.load(std::memory_order_relaxed) == last) {
+      State::Place& p = s.samples[place];
+      ++p.n;
+      if (!deeper.empty()) ++p.deeper[deeper];
+    }
   }
 }
 
@@ -183,7 +200,7 @@ void Heartbeat() {
   State& s = S();
   const int64_t now = Clock::now().time_since_epoch().count();
   const int64_t last = s.last_swap.exchange(now, std::memory_order_relaxed);
-  std::map<std::string, int> samples;
+  std::map<std::string, State::Place> samples;
   {
     std::lock_guard lock(s.mutex);
     // Follow the thread that swaps, should it ever change.
@@ -216,15 +233,21 @@ void Heartbeat() {
   if (++lines > kLinesPerMinute) return;
   std::vector<std::pair<int, std::string>> top;
   int total = 0;
-  for (auto& [place, n] : samples) {
-    top.push_back({n, place});
-    total += n;
+  for (auto& [place, p] : samples) {
+    top.push_back({p.n, place});
+    total += p.n;
   }
   std::sort(top.rbegin(), top.rend());
   std::string list;
   for (size_t i = 0; i < top.size() && i < 6; ++i) {
     if (i) list += ", ";
     list += top[i].second + " " + std::to_string(100 * top[i].first / total) + "%";
+    // Its most frequent deeper callers, with how often they were seen: "(via sub_X < sub_Y 80%)".
+    const State::Place& p = samples[top[i].second];
+    auto best = std::max_element(p.deeper.begin(), p.deeper.end(),
+                                 [](const auto& a, const auto& b) { return a.second < b.second; });
+    if (best != p.deeper.end())
+      list += " (via " + best->first + " " + std::to_string(100 * best->second / p.n) + "%)";
   }
   REXLOG_INFO("GRAW stall: frame took {:.0f} ms, {} samples of the game thread after {} ms: {}",
               std::chrono::duration<double, std::milli>(frame).count(), total,
