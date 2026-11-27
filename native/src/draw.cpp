@@ -521,8 +521,14 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   ID3D12GraphicsCommandList* list9_of = nullptr;
   std::filesystem::path library_path;
   size_t prewarm_next = 0;  // into store.loaded_pipelines()
-  uint32_t prewarm_failed = 0, prewarm_frames = 0;
+  std::atomic<uint32_t> prewarm_failed{0}, prewarm_skipped{0};  // read by the workers
+  uint32_t prewarm_frames = 0;
   double prewarm_ms = 0;
+  // The workers' count of finished prewarm pipelines (under pso_mutex), from Init on, so the
+  // log says when every pipeline from earlier runs is ready.
+  uint32_t prewarm_finished = 0, prewarm_loaded = 0;
+  bool prewarm_logged = false;
+  std::chrono::steady_clock::time_point prewarm_t0 = std::chrono::steady_clock::now();
   std::unordered_map<uint32_t, std::vector<uint32_t>> geometry_shaders;
 
   // Shader lookup memo, direct-mapped by ucode address and size (plus the immediate load
@@ -1027,6 +1033,19 @@ void DrawRenderer::Impl::PipelineWorker(bool saves, bool on_wait) {
       job.target->state.store(kFailed, std::memory_order_release);
     }
     lock.lock();
+    if (job.target->prewarm) {
+      ++prewarm_finished;
+      prewarm_loaded += SUCCEEDED(hr) && loaded;
+      const size_t total = store.loaded_pipelines().size();
+      if (!prewarm_logged && prewarm_finished >= total - prewarm_failed - prewarm_skipped) {
+        prewarm_logged = true;
+        REXLOG_INFO("GRAW native pipelines: all {} from earlier runs ready {:.1f} s after start ({} "
+                    "from the library, {} compiled)",
+                    prewarm_finished,
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - prewarm_t0).count(),
+                    prewarm_loaded, prewarm_finished - prewarm_loaded);
+      }
+    }
     pso_ready_cv.notify_all();
   }
 }
@@ -1627,7 +1646,10 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
     key.vs = vst;
     key.ps = pst;
     const uint64_t hash = XXH3_64bits(&key, sizeof(key));
-    if (!pipelines.count(hash)) CreatePipeline(hash, key, *vst, pst, true);
+    if (!pipelines.count(hash))
+      CreatePipeline(hash, key, *vst, pst, true);
+    else
+      ++prewarm_skipped;  // a draw needed it first
   } while (prewarm_next < list.size() && std::chrono::steady_clock::now() - t0 < budget);
   prewarm_ms +=
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -1636,7 +1658,7 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
     REXLOG_INFO(
         "GRAW native pipelines: prewarm queued {} pipelines ({} failed) in {:.1f} ms "
         "over {} frames",
-        list.size() - prewarm_failed, prewarm_failed, prewarm_ms, prewarm_frames);
+        list.size() - prewarm_failed.load(), prewarm_failed.load(), prewarm_ms, prewarm_frames);
 }
 
 namespace {
