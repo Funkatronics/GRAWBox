@@ -4,6 +4,7 @@
 #include <rex/ppc/recompiled_code.h>
 
 #include <windows.h>
+#include <tlhelp32.h>
 #include <winternl.h>
 
 #include <algorithm>
@@ -15,6 +16,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -28,6 +30,8 @@ constexpr auto kSampleEvery = std::chrono::milliseconds(2);
 constexpr auto kLogFrom = std::chrono::milliseconds(100);
 constexpr int kLinesPerMinute = 20;
 constexpr size_t kStackCopy = 32 * 1024;  // bytes of the game thread's stack scanned per sample
+constexpr auto kOthersAfter = std::chrono::milliseconds(100);  // then the other threads too
+constexpr uint64_t kOthersEvery = 5;  // ticks (10 ms) between samples of the other threads
 
 // Never destroyed: the sampler thread is detached and may still run while the program exits.
 struct State {
@@ -42,6 +46,16 @@ struct State {
     std::map<std::string, int> deeper;
   };
   std::map<std::string, Place> samples;
+  // During a stall of kOthersAfter or more: the process's other threads (WatchOthers).
+  struct Other {
+    HANDLE handle = nullptr;
+    uintptr_t stack_base = 0;
+    uint64_t cpu_start = 0;  // CpuTime when the watch began
+    int64_t since = 0;       // Clock ticks when the watch began
+    std::string name;        // its thread description, if any
+    std::map<std::string, int> places;
+  };
+  std::map<DWORD, Other> others;
   // Host address -> guest function, and the bounds of the translated code.
   std::vector<std::pair<uintptr_t, uint32_t>> functions;
   uintptr_t code_begin = 0, code_end = 0;
@@ -123,73 +137,142 @@ uintptr_t StackBase(HANDLE thread) {
   return reinterpret_cast<uintptr_t>(tib.StackBase);
 }
 
+// One sample of `thread`: where it is (`place`) and, below a wait, its deeper game callers.
+bool SampleThread(State& s, HANDLE thread, uintptr_t stack_base, std::vector<uintptr_t>& stack,
+                  std::string& place, std::string& deeper) {
+  // While suspended: only the registers and a copy of the stack (ReadProcessMemory fails
+  // instead of faulting). Nothing that takes a lock the game thread might hold.
+  if (SuspendThread(thread) == DWORD(-1)) return false;
+  CONTEXT c{};
+  c.ContextFlags = CONTEXT_CONTROL;
+  size_t words = 0;
+  if (GetThreadContext(thread, &c) && stack_base > c.Rsp) {
+    const size_t bytes = std::min<size_t>(kStackCopy, stack_base - c.Rsp);
+    SIZE_T read = 0;
+    if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(c.Rsp), stack.data(),
+                          bytes, &read))
+      words = read / sizeof(uintptr_t);
+  }
+  ResumeThread(thread);
+  if (!c.Rip) return false;
+  // Where it is; if that is not a game function, the first of our modules and the first game
+  // function found among the return addresses on its stack (a scan, so approximate), which
+  // group the samples: "ntdll.dll < rexkernel.dll < sub_82101798". The next game functions
+  // (callers of a wait wrapper, which say what the game waits for) are kept per group: the scan
+  // can pick up stale addresses that deep, so they must not split a group.
+  place = GameFunction(s, uintptr_t(c.Rip));
+  deeper.clear();
+  if (place.empty()) {
+    place = ModuleName(uintptr_t(c.Rip));
+    if (place.empty()) place = "unknown";
+    // Up to kGameDepth game functions: a wait wrapper names only itself, its callers say what
+    // the game waits for.
+    constexpr int kGameDepth = 3;
+    std::string caller;
+    std::vector<std::string> games;
+    for (size_t i = 0; i < words && games.size() < kGameDepth; ++i) {
+      const uintptr_t v = stack[i];
+      if (v < 0x10000) continue;
+      if (std::string g = GameFunction(s, v); !g.empty()) {
+        if (std::find(games.begin(), games.end(), g) == games.end()) games.push_back(std::move(g));
+      } else if (games.empty() && caller.empty()) {
+        const std::string m = ModuleName(v);
+        if (!m.empty() && m != place && !SystemModule(m)) caller = m;
+      }
+    }
+    if (!caller.empty()) place += " < " + caller;
+    if (!games.empty()) place += " < " + games[0];
+    for (size_t i = 1; i < games.size(); ++i) deeper += (i > 1 ? " < " : "") + games[i];
+  }
+  return true;
+}
+uint64_t CpuTime(HANDLE thread) {  // kernel + user, in 100 ns units
+  FILETIME created, exited, kernel, user;
+  if (!GetThreadTimes(thread, &created, &exited, &kernel, &user)) return 0;
+  return (uint64_t(kernel.dwHighDateTime) << 32 | kernel.dwLowDateTime) +
+         (uint64_t(user.dwHighDateTime) << 32 | user.dwLowDateTime);
+}
+
+// The process's other threads, once the game thread has been stalled for kOthersAfter: their
+// names, CPU time so far and stacks, for sampling until the next Swap.
+void WatchOthers(State& s, DWORD game_thread) {
+  std::map<DWORD, State::Other> others;
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) return;
+  THREADENTRY32 e{};
+  e.dwSize = sizeof(e);
+  for (BOOL ok = Thread32First(snapshot, &e); ok; ok = Thread32Next(snapshot, &e)) {
+    if (e.th32OwnerProcessID != GetCurrentProcessId() || e.th32ThreadID == game_thread ||
+        e.th32ThreadID == GetCurrentThreadId())
+      continue;
+    HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
+                          FALSE, e.th32ThreadID);
+    if (!h) continue;
+    State::Other& o = others[e.th32ThreadID];
+    o.handle = h;
+    o.stack_base = StackBase(h);
+    o.cpu_start = CpuTime(h);
+    o.since = Clock::now().time_since_epoch().count();
+    PWSTR description = nullptr;
+    if (SUCCEEDED(GetThreadDescription(h, &description)) && description) {
+      for (const wchar_t* c = description; *c && o.name.size() < 40; ++c)
+        o.name += *c < 128 ? char(*c) : '?';
+      LocalFree(description);
+    }
+  }
+  CloseHandle(snapshot);
+  std::lock_guard lock(s.mutex);
+  for (auto& [id, o] : s.others) CloseHandle(o.handle);
+  s.others = std::move(others);
+}
+
 void Sampler() {
   State& s = S();
   BuildFunctionTable(s);
   std::vector<uintptr_t> stack(kStackCopy / sizeof(uintptr_t));
-  for (;;) {
+  std::string place, deeper;
+  int64_t watched = 0;  // the frame (last swap) whose other threads are being sampled
+  for (uint64_t tick = 0;; ++tick) {
     std::this_thread::sleep_for(kSampleEvery);
     const int64_t last = s.last_swap.load(std::memory_order_relaxed);
-    if (Clock::now().time_since_epoch().count() - last <
-        std::chrono::duration_cast<Clock::duration>(kSampleAfter).count())
-      continue;
+    const int64_t age = Clock::now().time_since_epoch().count() - last;
+    if (age < std::chrono::duration_cast<Clock::duration>(kSampleAfter).count()) continue;
     HANDLE thread;
     uintptr_t stack_base;
+    DWORD thread_id;
     {
       std::lock_guard lock(s.mutex);
       thread = s.thread;
       stack_base = s.stack_base;
+      thread_id = s.thread_id;
     }
     if (!thread) continue;
-    // While suspended: only the registers and a copy of the stack (ReadProcessMemory fails
-    // instead of faulting). Nothing that takes a lock the game thread might hold.
-    if (SuspendThread(thread) == DWORD(-1)) continue;
-    CONTEXT c{};
-    c.ContextFlags = CONTEXT_CONTROL;
-    size_t words = 0;
-    if (GetThreadContext(thread, &c) && stack_base > c.Rsp) {
-      const size_t bytes = std::min<size_t>(kStackCopy, stack_base - c.Rsp);
-      SIZE_T read = 0;
-      if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(c.Rsp), stack.data(),
-                            bytes, &read))
-        words = read / sizeof(uintptr_t);
-    }
-    ResumeThread(thread);
-    if (!c.Rip) continue;
-    // Where it is; if that is not a game function, the first of our modules and the first game
-    // function found among the return addresses on its stack (a scan, so approximate), which
-    // group the samples: "ntdll.dll < rexkernel.dll < sub_82101798". The next game functions
-    // (callers of a wait wrapper, which say what the game waits for) are kept per group: the scan
-    // can pick up stale addresses that deep, so they must not split a group.
-    std::string place = GameFunction(s, uintptr_t(c.Rip)), deeper;
-    if (place.empty()) {
-      place = ModuleName(uintptr_t(c.Rip));
-      if (place.empty()) place = "unknown";
-      // Up to kGameDepth game functions: a wait wrapper names only itself, its callers say what
-      // the game waits for.
-      constexpr int kGameDepth = 3;
-      std::string caller;
-      std::vector<std::string> games;
-      for (size_t i = 0; i < words && games.size() < kGameDepth; ++i) {
-        const uintptr_t v = stack[i];
-        if (v < 0x10000) continue;
-        if (std::string g = GameFunction(s, v); !g.empty()) {
-          if (std::find(games.begin(), games.end(), g) == games.end()) games.push_back(std::move(g));
-        } else if (games.empty() && caller.empty()) {
-          const std::string m = ModuleName(v);
-          if (!m.empty() && m != place && !SystemModule(m)) caller = m;
-        }
+    if (SampleThread(s, thread, stack_base, stack, place, deeper)) {
+      std::lock_guard lock(s.mutex);
+      // Only if the frame is still the one being sampled (no swap in between).
+      if (s.last_swap.load(std::memory_order_relaxed) == last) {
+        State::Place& p = s.samples[place];
+        ++p.n;
+        if (!deeper.empty()) ++p.deeper[deeper];
       }
-      if (!caller.empty()) place += " < " + caller;
-      if (!games.empty()) place += " < " + games[0];
-      for (size_t i = 1; i < games.size(); ++i) deeper += (i > 1 ? " < " : "") + games[i];
     }
-    std::lock_guard lock(s.mutex);
-    // Only if the frame is still the one being sampled (no swap in between).
-    if (s.last_swap.load(std::memory_order_relaxed) == last) {
-      State::Place& p = s.samples[place];
-      ++p.n;
-      if (!deeper.empty()) ++p.deeper[deeper];
+    // A long stall: what the other threads are doing meanwhile, every kOthersEvery ticks.
+    if (age < std::chrono::duration_cast<Clock::duration>(kOthersAfter).count()) continue;
+    if (watched != last) {
+      WatchOthers(s, thread_id);
+      watched = last;
+    }
+    if (tick % kOthersEvery) continue;
+    std::vector<std::tuple<DWORD, HANDLE, uintptr_t>> others;
+    {
+      std::lock_guard lock(s.mutex);
+      for (auto& [id, o] : s.others) others.emplace_back(id, o.handle, o.stack_base);
+    }
+    for (auto& [id, handle, base] : others) {
+      if (!SampleThread(s, handle, base, stack, place, deeper)) continue;
+      std::lock_guard lock(s.mutex);
+      if (s.last_swap.load(std::memory_order_relaxed) != last) break;
+      if (auto it = s.others.find(id); it != s.others.end()) ++it->second.places[place];
     }
   }
 }
@@ -201,6 +284,7 @@ void Heartbeat() {
   const int64_t now = Clock::now().time_since_epoch().count();
   const int64_t last = s.last_swap.exchange(now, std::memory_order_relaxed);
   std::map<std::string, State::Place> samples;
+  std::map<DWORD, State::Other> others;
   {
     std::lock_guard lock(s.mutex);
     // Follow the thread that swaps, should it ever change.
@@ -217,6 +301,34 @@ void Heartbeat() {
                     GetLastError());
     }
     samples.swap(s.samples);
+    others.swap(s.others);
+  }
+  // The other threads that used the most CPU during the stall, with where they were most often:
+  // "AI (1234) 92% CPU at sub_X 80%". Their handles are closed here.
+  std::string busy;
+  {
+    std::vector<std::pair<uint64_t, DWORD>> by_cpu;
+    for (auto& [id, o] : others) by_cpu.push_back({CpuTime(o.handle) - o.cpu_start, id});
+    std::sort(by_cpu.rbegin(), by_cpu.rend());
+    for (size_t i = 0; i < by_cpu.size() && i < 4; ++i) {
+      const State::Other& o = others[by_cpu[i].second];
+      // Of the time it was watched (from kOthersAfter into the stall).
+      const double watched_100ns =
+          double(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::duration(now - o.since))
+                     .count()) / 100.0;
+      const int cpu = watched_100ns > 0 ? int(100.0 * double(by_cpu[i].first) / watched_100ns) : 0;
+      if (cpu < 5) break;
+      int n = 0;
+      for (auto& [p, c] : o.places) n += c;
+      auto top = std::max_element(o.places.begin(), o.places.end(),
+                                  [](const auto& a, const auto& b) { return a.second < b.second; });
+      if (!busy.empty()) busy += "; ";
+      busy += (o.name.empty() ? std::string("thread") : o.name) + " (" +
+              std::to_string(by_cpu[i].second) + ") " + std::to_string(cpu) + "% CPU";
+      if (top != o.places.end())
+        busy += " at " + top->first + " " + std::to_string(100 * top->second / n) + "%";
+    }
+    for (auto& [id, o] : others) CloseHandle(o.handle);
   }
   if (!last) {
     std::thread(Sampler).detach();
@@ -252,6 +364,7 @@ void Heartbeat() {
   REXLOG_INFO("GRAW stall: frame took {:.0f} ms, {} samples of the game thread after {} ms: {}",
               std::chrono::duration<double, std::milli>(frame).count(), total,
               std::chrono::duration_cast<std::chrono::milliseconds>(kSampleAfter).count(), list);
+  if (!busy.empty()) REXLOG_INFO("GRAW stall: busiest other threads meanwhile: {}", busy);
 }
 
 }  // namespace grawbox::stall
