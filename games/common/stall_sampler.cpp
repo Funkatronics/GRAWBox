@@ -50,12 +50,17 @@ struct State {
   struct Other {
     HANDLE handle = nullptr;
     uintptr_t stack_base = 0;
-    uint64_t cpu_start = 0;  // CpuTime when the watch began
-    int64_t since = 0;       // Clock ticks when the watch began
-    std::string name;        // its thread description, if any
+    uint64_t cycles_start = 0;  // QueryThreadCycleTime when the watch began
+    int64_t since = 0;          // Clock ticks when the watch began
+    std::string name;           // its description, else the module it started in
+    bool sampled = false;       // started in our code: suspended and sampled (others only timed)
     std::map<std::string, int> places;
   };
   std::map<DWORD, Other> others;
+  int64_t others_frame = 0;  // the frame (last_swap) `others` belongs to
+  // Handles of watches that ended: closed by the sampler thread, the only one that uses them.
+  std::vector<HANDLE> retired;
+  double cycles_per_second = 0;  // for QueryThreadCycleTime (calibrated at start)
   // Host address -> guest function, and the bounds of the translated code.
   std::vector<std::pair<uintptr_t, uint32_t>> functions;
   uintptr_t code_begin = 0, code_end = 0;
@@ -186,16 +191,53 @@ bool SampleThread(State& s, HANDLE thread, uintptr_t stack_base, std::vector<uin
   }
   return true;
 }
-uint64_t CpuTime(HANDLE thread) {  // kernel + user, in 100 ns units
-  FILETIME created, exited, kernel, user;
-  if (!GetThreadTimes(thread, &created, &exited, &kernel, &user)) return 0;
-  return (uint64_t(kernel.dwHighDateTime) << 32 | kernel.dwLowDateTime) +
-         (uint64_t(user.dwHighDateTime) << 32 | user.dwLowDateTime);
+// CPU cycles the thread has used (QueryThreadCycleTime counts exactly, unlike GetThreadTimes,
+// which moves in scheduler ticks of about 15.6 ms); false if it can't be read.
+bool Cycles(HANDLE thread, uint64_t& cycles) {
+  ULONG64 c = 0;
+  if (!QueryThreadCycleTime(thread, &c)) return false;
+  cycles = c;
+  return true;
+}
+
+// Cycles per second, for turning a thread's cycles into a share of the time watched: the
+// sampler thread's own cycles while it spins for 50 ms.
+double CalibrateCycles() {
+  uint64_t c0 = 0, c1 = 0;
+  const auto t0 = Clock::now();
+  if (!Cycles(GetCurrentThread(), c0)) return 0;
+  while (Clock::now() - t0 < std::chrono::milliseconds(50)) {
+  }
+  if (!Cycles(GetCurrentThread(), c1)) return 0;
+  return double(c1 - c0) / std::chrono::duration<double>(Clock::now() - t0).count();
+}
+
+// The module the thread started in ("" if unknown), from its Win32 start address.
+std::string StartModule(HANDLE thread) {
+  using Query = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+  static auto query = reinterpret_cast<Query>(
+      GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread"));
+  PVOID start = nullptr;
+  if (!query || query(thread, 9 /* ThreadQuerySetWin32StartAddress */, &start, sizeof(start),
+                      nullptr) < 0)
+    return {};
+  return ModuleName(reinterpret_cast<uintptr_t>(start));
+}
+
+// Our code: the game program, its runtime and renderer, and the C runtime's thread start, which
+// std::thread uses (the runtime's guest threads and the renderer's workers start there; drivers
+// link their own). Threads started there are suspended and sampled; driver, audio and thread-pool
+// threads are only timed, so pausing them can't lengthen the stall being measured.
+bool OurModule(const std::string& name) {
+  std::string n;
+  for (char ch : name) n += char(std::tolower(static_cast<unsigned char>(ch)));
+  return n.starts_with("graw") || n.starts_with("rex") || n == "ucrtbase.dll";
 }
 
 // The process's other threads, once the game thread has been stalled for kOthersAfter: their
-// names, CPU time so far and stacks, for sampling until the next Swap.
-void WatchOthers(State& s, DWORD game_thread) {
+// names and CPU cycles so far, and for ours their stacks, for sampling until the next Swap. Kept
+// only if `frame` is still the current one.
+void WatchOthers(State& s, DWORD game_thread, int64_t frame) {
   std::map<DWORD, State::Other> others;
   HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
   if (snapshot == INVALID_HANDLE_VALUE) return;
@@ -208,10 +250,14 @@ void WatchOthers(State& s, DWORD game_thread) {
     HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
                           FALSE, e.th32ThreadID);
     if (!h) continue;
+    uint64_t cycles = 0;
+    if (!Cycles(h, cycles)) {
+      CloseHandle(h);
+      continue;
+    }
     State::Other& o = others[e.th32ThreadID];
     o.handle = h;
-    o.stack_base = StackBase(h);
-    o.cpu_start = CpuTime(h);
+    o.cycles_start = cycles;
     o.since = Clock::now().time_since_epoch().count();
     PWSTR description = nullptr;
     if (SUCCEEDED(GetThreadDescription(h, &description)) && description) {
@@ -219,21 +265,44 @@ void WatchOthers(State& s, DWORD game_thread) {
         o.name += *c < 128 ? char(*c) : '?';
       LocalFree(description);
     }
+    const std::string module = StartModule(h);
+    if (o.name.empty()) o.name = module.empty() ? "thread" : module;
+    o.sampled = OurModule(module);
+    if (o.sampled) o.stack_base = StackBase(h);
   }
   CloseHandle(snapshot);
   std::lock_guard lock(s.mutex);
-  for (auto& [id, o] : s.others) CloseHandle(o.handle);
+  if (s.last_swap.load(std::memory_order_relaxed) != frame) {
+    // The stall ended meanwhile: not for the next frame.
+    for (auto& [id, o] : others) s.retired.push_back(o.handle);
+    return;
+  }
+  for (auto& [id, o] : s.others) s.retired.push_back(o.handle);
   s.others = std::move(others);
+  s.others_frame = frame;
 }
 
 void Sampler() {
   State& s = S();
   BuildFunctionTable(s);
+  {
+    const double rate = CalibrateCycles();
+    std::lock_guard lock(s.mutex);
+    s.cycles_per_second = rate;
+  }
   std::vector<uintptr_t> stack(kStackCopy / sizeof(uintptr_t));
   std::string place, deeper;
   int64_t watched = 0;  // the frame (last swap) whose other threads are being sampled
+  std::vector<HANDLE> retired;
   for (uint64_t tick = 0;; ++tick) {
     std::this_thread::sleep_for(kSampleEvery);
+    // Handles of ended watches: only this thread samples with them, so only it closes them.
+    {
+      std::lock_guard lock(s.mutex);
+      retired.swap(s.retired);
+    }
+    for (HANDLE h : retired) CloseHandle(h);
+    retired.clear();
     const int64_t last = s.last_swap.load(std::memory_order_relaxed);
     const int64_t age = Clock::now().time_since_epoch().count() - last;
     if (age < std::chrono::duration_cast<Clock::duration>(kSampleAfter).count()) continue;
@@ -259,14 +328,16 @@ void Sampler() {
     // A long stall: what the other threads are doing meanwhile, every kOthersEvery ticks.
     if (age < std::chrono::duration_cast<Clock::duration>(kOthersAfter).count()) continue;
     if (watched != last) {
-      WatchOthers(s, thread_id);
+      WatchOthers(s, thread_id, last);
       watched = last;
     }
     if (tick % kOthersEvery) continue;
     std::vector<std::tuple<DWORD, HANDLE, uintptr_t>> others;
     {
       std::lock_guard lock(s.mutex);
-      for (auto& [id, o] : s.others) others.emplace_back(id, o.handle, o.stack_base);
+      if (s.others_frame == last)
+        for (auto& [id, o] : s.others)
+          if (o.sampled) others.emplace_back(id, o.handle, o.stack_base);
     }
     for (auto& [id, handle, base] : others) {
       if (!SampleThread(s, handle, base, stack, place, deeper)) continue;
@@ -285,11 +356,12 @@ void Heartbeat() {
   const int64_t last = s.last_swap.exchange(now, std::memory_order_relaxed);
   std::map<std::string, State::Place> samples;
   std::map<DWORD, State::Other> others;
+  double cycles_per_second = 0;
   {
     std::lock_guard lock(s.mutex);
     // Follow the thread that swaps, should it ever change.
     if (s.thread_id != GetCurrentThreadId()) {
-      if (s.thread) CloseHandle(s.thread);
+      if (s.thread) s.retired.push_back(s.thread);  // closed by the sampler, which may use it
       s.thread = nullptr;
       s.thread_id = GetCurrentThreadId();
       if (DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &s.thread,
@@ -301,34 +373,20 @@ void Heartbeat() {
                     GetLastError());
     }
     samples.swap(s.samples);
-    others.swap(s.others);
-  }
-  // The other threads that used the most CPU during the stall, with where they were most often:
-  // "AI (1234) 92% CPU at sub_X 80%". Their handles are closed here.
-  std::string busy;
-  {
-    std::vector<std::pair<uint64_t, DWORD>> by_cpu;
-    for (auto& [id, o] : others) by_cpu.push_back({CpuTime(o.handle) - o.cpu_start, id});
-    std::sort(by_cpu.rbegin(), by_cpu.rend());
-    for (size_t i = 0; i < by_cpu.size() && i < 4; ++i) {
-      const State::Other& o = others[by_cpu[i].second];
-      // Of the time it was watched (from kOthersAfter into the stall).
-      const double watched_100ns =
-          double(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::duration(now - o.since))
-                     .count()) / 100.0;
-      const int cpu = watched_100ns > 0 ? int(100.0 * double(by_cpu[i].first) / watched_100ns) : 0;
-      if (cpu < 5) break;
-      int n = 0;
-      for (auto& [p, c] : o.places) n += c;
-      auto top = std::max_element(o.places.begin(), o.places.end(),
-                                  [](const auto& a, const auto& b) { return a.second < b.second; });
-      if (!busy.empty()) busy += "; ";
-      busy += (o.name.empty() ? std::string("thread") : o.name) + " (" +
-              std::to_string(by_cpu[i].second) + ") " + std::to_string(cpu) + "% CPU";
-      if (top != o.places.end())
-        busy += " at " + top->first + " " + std::to_string(100 * top->second / n) + "%";
-    }
-    for (auto& [id, o] : others) CloseHandle(o.handle);
+    // The watched threads' cycles since the watch began, read while their handles are still open;
+    // the handles go to the sampler thread to close.
+    if (s.others_frame == last)
+      for (auto& [id, o] : s.others) {
+        uint64_t end = 0;
+        if (Cycles(o.handle, end) && end >= o.cycles_start) {
+          o.cycles_start = end - o.cycles_start;  // from here on: cycles used
+          others.emplace(id, std::move(o));
+        }
+      }
+    for (auto& [id, o] : s.others) s.retired.push_back(o.handle);
+    s.others.clear();
+    s.others_frame = 0;
+    cycles_per_second = s.cycles_per_second;
   }
   if (!last) {
     std::thread(Sampler).detach();
@@ -360,6 +418,31 @@ void Heartbeat() {
                                  [](const auto& a, const auto& b) { return a.second < b.second; });
     if (best != p.deeper.end())
       list += " (via " + best->first + " " + std::to_string(100 * best->second / p.n) + "%)";
+  }
+  // The other threads that used the most CPU while watched (from kOthersAfter into the stall),
+  // with, for ours, where they were most often: "rexkernel.dll (1234) 92% CPU at sub_X 80%".
+  std::string busy;
+  if (cycles_per_second > 0) {
+    std::vector<std::pair<uint64_t, DWORD>> by_cycles;
+    for (auto& [id, o] : others) by_cycles.push_back({o.cycles_start, id});
+    std::sort(by_cycles.rbegin(), by_cycles.rend());
+    for (size_t i = 0; i < by_cycles.size() && i < 4; ++i) {
+      const State::Other& o = others[by_cycles[i].second];
+      const double seconds = std::chrono::duration<double>(Clock::duration(now - o.since)).count();
+      if (seconds <= 0) continue;
+      const int cpu = int(std::min(100.0 * double(by_cycles[i].first) / cycles_per_second / seconds,
+                                   999.0));
+      if (cpu < 5) break;
+      if (!busy.empty()) busy += "; ";
+      busy += o.name + " (" + std::to_string(by_cycles[i].second) + ") " + std::to_string(cpu) +
+              "% CPU";
+      int n = 0;
+      for (auto& [p, c] : o.places) n += c;
+      auto top = std::max_element(o.places.begin(), o.places.end(),
+                                  [](const auto& a, const auto& b) { return a.second < b.second; });
+      if (top != o.places.end())
+        busy += " at " + top->first + " " + std::to_string(100 * top->second / n) + "%";
+    }
   }
   REXLOG_INFO("GRAW stall: frame took {:.0f} ms, {} samples of the game thread after {} ms: {}",
               std::chrono::duration<double, std::milli>(frame).count(), total,
