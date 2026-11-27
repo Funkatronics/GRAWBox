@@ -125,6 +125,7 @@ const char* Option(const char* name) {
   if (length && length < sizeof(buffer)) return (values[n] = buffer).c_str();
   if (n == "native_primary") return "true";
   if (n == "d3d12_present_vsync") return Settings().vsync.Get() ? "true" : "false";
+  if (n == "native_pipeline_wait") return Settings().shader_wait.Get() ? "true" : "false";
   if (n == "native_haze") return (values[n] = Settings().haze.Get()).c_str();
   if (n == "native_anisotropy")
     return (values[n] = std::to_string(Settings().anisotropy.Get())).c_str();

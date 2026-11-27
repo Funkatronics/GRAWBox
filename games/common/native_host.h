@@ -47,6 +47,11 @@ class NativeSettings : public rex::SettingOwner {
               rex::Allowed("centered", "stretched"), rex::kRestart);
   REX_SETTING(bool, vsync, true, "Wait for the display when the native renderer presents",
               rex::kRestart);
+  REX_SETTING(bool, shader_wait, true,
+              "Native renderer: wait (up to 0.5 s) for shaders seen for the first time, so frames are not "
+              "shown with draws missing, at the cost of a stutter (false: the frame is shown without them "
+              "and they appear a frame or a few later)",
+              rex::kRestart);
 };
 
 NativeSettings& Settings();
