@@ -1,4 +1,5 @@
 #include "native_host.h"
+#include "stall_sampler.h"
 
 #include "../../input/keys.h"
 
@@ -305,6 +306,7 @@ void SetApp(rex::app::App* app) { g_app = app; }
 
 void Call(uint32_t function, PPCContext& ctx, uint8_t* base,
           void (*original)(PPCContext&, uint8_t*)) {
+  if (function == 10) grawbox::stall::Heartbeat();  // Swap (games/*/src/native_hooks.cpp)
   static const bool started = Start();
   if (!started) {
     original(ctx, base);
