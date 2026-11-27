@@ -1,13 +1,16 @@
 # Makes a recipe file from the native renderer's pipeline stores (cache-native\graw-native\pipelines.bin
 # from playtests): the pipeline records only, without the shaders, merged and without duplicates. A
-# recipe names its shaders by hash, so the file holds no game code; the shaders come from the
-# player's own files at start-up (native/src/disc_shaders.h). Format: native/src/pipeline_store.cpp.
+# recipe names its shaders by hash, so the file holds no game code (patch records hold only changed
+# bits, below); the shaders come from the player's own files at start-up (native/src/disc_shaders.h).
+# Format: native/src/pipeline_store.cpp.
 #
 # With -Shaders (the game's NewYetiShadersX360.sdf), also patched shader records ('V'): a drawn shader
-# is often a disc one with some fetch instructions patched when bound (vertex fetches for the vertex
-# layout, texture fetch fields in pixel shaders), so the record names the disc entry (its index in
-# the file) and the dwords that differ, and the game rebuilds the drawn shader, checked against its
-# hash, for a complete pipeline. Shaders on the disc as drawn need no record.
+# is often a disc one with some fetch instruction fields set when bound (vertex fetches for the
+# vertex layout, texture fetch fields in pixel shaders), so the record names the disc entry (its
+# index in the file) and, per differing dword, the XOR of the drawn and the disc dword: only the bits
+# of the fields the SDK set (layout and binding values), never the instruction itself, which comes
+# from the player's own file. The game rebuilds the drawn shader, checked against its hash, for a
+# complete pipeline. Shaders on the disc as drawn need no record.
 #   tools/make_recipes.ps1 -Out <grawbox-recipes.bin> -Stores <pipelines.bin>... [-Shaders <.sdf>]
 [CmdletBinding()]
 param(
@@ -19,6 +22,9 @@ $ErrorActionPreference = 'Stop'
 # Relative to this shell's location, not the .NET working directory.
 $Out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Out)
 
+# Compiled once per PowerShell session (Add-Type cannot redefine a type): after editing the C#
+# below, run the script in a new session.
+if (-not ([System.Management.Automation.PSTypeName]'ShaderPatches').Type) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -79,7 +85,8 @@ public static class ShaderPatches {
             for (int k = 0; k < code.Length; k += 4) {
                 if (code[k] == src[k] && code[k + 1] == src[k + 1] && code[k + 2] == src[k + 2] && code[k + 3] == src[k + 3]) continue;
                 w.Write((uint)(k / 4));
-                w.Write(code, k, 4);  // as in guest memory
+                // The changed bits only (drawn XOR disc), in guest byte order.
+                for (int b = 0; b < 4; ++b) w.Write((byte)(code[k + b] ^ src[k + b]));
             }
             ++paired; dwords += bestDiff;
         }
@@ -87,6 +94,7 @@ public static class ShaderPatches {
     }
 }
 '@
+}
 
 $header = $null
 $seen = [System.Collections.Generic.HashSet[string]]::new()

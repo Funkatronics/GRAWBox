@@ -67,7 +67,7 @@ class PipelineStore {
   // vertex fetches for the layout, texture fetch fields). nullptr if the file had none for `hash`.
   struct VertexPatch {
     uint32_t entry;
-    std::vector<std::pair<uint32_t, uint32_t>> dwords;  // index, value as in guest memory
+    std::vector<std::pair<uint32_t, uint32_t>> dwords;  // index, XOR with the game's dword
   };
   const VertexPatch* recipe_vertex(uint64_t hash) const {
     auto it = recipe_vertex_.find(hash);

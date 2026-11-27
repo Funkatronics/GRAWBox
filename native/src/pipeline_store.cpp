@@ -144,7 +144,7 @@ void PipelineStore::Open(const std::filesystem::path& dir, uint32_t key_size,
 size_t PipelineStore::AddRecipes(const std::filesystem::path& file, uint32_t key_version) {
   if (!key_size_) return 0;
   const std::vector<uint8_t> data = ReadWholeFile(file);
-  size_t pos = 0, added = 0;
+  size_t pos = 0, added = 0, patches = 0;
   auto take = [&](void* out, size_t n) {
     if (data.size() - pos < n) return false;
     std::memcpy(out, data.data() + pos, n);
@@ -195,13 +195,13 @@ size_t PipelineStore::AddRecipes(const std::filesystem::path& file, uint32_t key
         take(&index, 4);
         take(&value, 4);
       }
-      recipe_vertex_.emplace(hash, std::move(patch));
+      patches += recipe_vertex_.emplace(hash, std::move(patch)).second;
     } else {
       break;
     }
   }
-  REXLOG_INFO("GRAW native pipelines: {} recipes and {} vertex shader patches added from {}", added,
-              recipe_vertex_.size(), file.string());
+  REXLOG_INFO("GRAW native pipelines: {} recipes and {} shader patches added from {}", added,
+              patches, file.string());
   return added;
 }
 

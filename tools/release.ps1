@@ -86,7 +86,14 @@ foreach ($game in 'graw1', 'graw2') {
     # Recipes gathered in playtests (tools/make_recipes.ps1), kept outside the repository; the shaders
     # they name come from the player's own files at start-up.
     $recipes = Join-Path $root "private\recipes\$game.bin"
-    if (Test-Path $recipes) { Copy-Item $recipes (Join-Path $dir 'grawbox-recipes.bin') }
+    if (Test-Path $recipes) {
+        # Format, key size and key version: the game ignores a file whose differ from its own
+        # (PipelineStore::AddRecipes logs it), so check them against a fresh cache's pipelines.bin.
+        $h = [IO.File]::ReadAllBytes($recipes)[4..15]
+        Write-Host ("release: {0} recipes from {1} (format {2}, key size {3}, key version {4})" -f $game,
+            $recipes, [BitConverter]::ToUInt32($h, 0), [BitConverter]::ToUInt32($h, 4), [BitConverter]::ToUInt32($h, 8))
+        Copy-Item $recipes (Join-Path $dir 'grawbox-recipes.bin')
+    }
     foreach ($needed in "${game}_campaign.exe", 'grawbox_native.dll', 'rexkernel.dll', 'vcruntime140.dll') {
         if (-not (Test-Path (Join-Path $dir $needed))) { Fail "$needed is missing from programs\$game" }
     }
