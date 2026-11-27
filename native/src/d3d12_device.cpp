@@ -14,9 +14,11 @@ REXCVAR_DEFINE_BOOL(graw_native_allow_tearing, false, "GRAW native",
 #include <simde/x86/sse.h>
 
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <cwchar>
 #include <mutex>
+#include <string>
 
 REXCVAR_DEFINE_BOOL(graw_native_gpu_serialize, false, "GRAW native",
                     "Debug: wait for the GPU at the end of every frame, so no frame is in flight "
@@ -37,9 +39,52 @@ constexpr UINT_PTR kTitleTimer = 1;
 const wchar_t kClassName[] = L"graw_native_debug";
 }  // namespace
 
+namespace {
+std::atomic<ID3D12Device*> g_device{nullptr};  // for the removal log; lives as long as the renderer
+
+// Once, when the device is lost: why, and from DRED (switched on by the game at start) the GPU's
+// last operations per command list and any page fault.
+void LogRemoval() {
+  static std::atomic<bool> logged{false};
+  ID3D12Device* device = g_device.load();
+  if (!device || logged.exchange(true)) return;
+  REXLOG_ERROR("GRAW native: device removed, reason HRESULT {:08X}",
+               uint32_t(device->GetDeviceRemovedReason()));
+  ComPtr<ID3D12DeviceRemovedExtendedData> dred;
+  if (FAILED(device->QueryInterface(IID_PPV_ARGS(dred.GetAddressOf())))) {
+    REXLOG_ERROR("GRAW native: no DRED data");
+    return;
+  }
+  D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT crumbs = {};
+  if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput(&crumbs))) {
+    int lists = 0;
+    for (const D3D12_AUTO_BREADCRUMB_NODE* n = crumbs.pHeadAutoBreadcrumbNode; n && lists < 8;
+         n = n->pNext) {
+      if (!n->pLastBreadcrumbValue || !n->pCommandHistory) continue;
+      const UINT done = *n->pLastBreadcrumbValue;
+      if (done >= n->BreadcrumbCount) continue;  // finished: not where the GPU stopped
+      ++lists;
+      std::string ops;
+      for (UINT i = done > 2 ? done - 2 : 0; i < std::min(done + 3, n->BreadcrumbCount); ++i)
+        ops += std::to_string(int(n->pCommandHistory[i])) + (i == done ? "* " : " ");
+      REXLOG_ERROR("GRAW native: DRED list {} done {} of {} ops; around it (op ids, * not done): {}",
+                   n->pCommandListDebugNameA ? n->pCommandListDebugNameA : "?", done,
+                   n->BreadcrumbCount, ops);
+    }
+    if (!lists) REXLOG_ERROR("GRAW native: DRED: no command list was left unfinished");
+  }
+  D3D12_DRED_PAGE_FAULT_OUTPUT fault = {};
+  if (SUCCEEDED(dred->GetPageFaultAllocationOutput(&fault)) && fault.PageFaultVA)
+    REXLOG_ERROR("GRAW native: DRED page fault at GPU address {:016X}", fault.PageFaultVA);
+}
+}  // namespace
+
 bool Failed(HRESULT hr, const char* what) {
   if (SUCCEEDED(hr)) return false;
   REXLOG_ERROR("GRAW native: {} failed: HRESULT {:08X}", what, uint32_t(hr));
+  if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET ||
+      hr == DXGI_ERROR_DEVICE_HUNG || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR)
+    LogRemoval();
   return true;
 }
 
@@ -64,6 +109,8 @@ pD3DCompile D3DCompiler() {
 }
 
 D3D12Device::~D3D12Device() {
+  ID3D12Device* mine = device_.Get();
+  g_device.compare_exchange_strong(mine, nullptr);
   WaitIdle();
   if (HWND h = hwnd_.load()) PostMessageW(h, WM_CLOSE, 1, 0);
   if (window_thread_.joinable()) window_thread_.join();
@@ -166,6 +213,7 @@ bool D3D12Device::Initialize(uint32_t width, uint32_t height, const wchar_t* tit
                                IID_PPV_ARGS(device_.ReleaseAndGetAddressOf())),
              "D3D12CreateDevice"))
     return false;
+  g_device = device_.Get();
   DXGI_ADAPTER_DESC1 ad = {};
   adapter->GetDesc1(&ad);
   vendor_id_ = ad.VendorId;
@@ -414,8 +462,7 @@ bool D3D12Device::EndFrame(bool present, std::span<ID3D12CommandList* const> fir
   end_frame_times_.submit_ns = t1 - t0;
   end_frame_times_.present_ns = NowNs() - t1;
   if (Failed(hr, "Present")) {
-    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
-      Failed(device_->GetDeviceRemovedReason(), "device removed, reason");
+    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) LogRemoval();
     return false;
   }
   end_frame_times_.presented = shown;
