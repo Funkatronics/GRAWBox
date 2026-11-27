@@ -49,10 +49,30 @@ class Mouse {
     if (const DWORD id = id_) PostThreadMessageW(id, WM_QUIT, 0, 0);
     thread_.join();
   }
-  // Whether the wheel turned that way in the last moment.
-  bool Wheel(bool up) const {
-    const ULONGLONG at = up ? wheel_up_ : wheel_down_;
-    return at && GetTickCount64() - at < 90;
+  // The wheel as a button: each notch one press, held 40 ms and released at least 30 ms before the
+  // next, so quick notches give as many presses (at most two waiting) and every read of the pad in
+  // that time sees the press. Under the driver's lock.
+  bool Wheel(bool up) {
+    Button& b = wheel_[up];
+    const ULONGLONG now = GetTickCount64();
+    if (b.pressed) {
+      if (now - b.since >= 40) {
+        b.pressed = false;
+        b.since = now;
+      }
+    } else if (now - b.since >= 30 && b.notches > 0) {
+      --b.notches;
+      b.pressed = true;
+      b.since = now;
+    }
+    return b.pressed;
+  }
+  // Notches made while the game was not in front are not the game's. Under the driver's lock.
+  void DropWheel() {
+    for (Button& b : wheel_) {
+      b.notches = 0;
+      b.pressed = false;
+    }
   }
   void Take(long& dx, long& dy) {
     dx = dx_.exchange(0);
@@ -71,9 +91,21 @@ class Mouse {
         if (self) {
           self->dx_ += raw.data.mouse.lLastX;
           self->dy_ += raw.data.mouse.lLastY;
-          if (raw.data.mouse.usButtonFlags & RI_MOUSE_WHEEL)
-            (SHORT(raw.data.mouse.usButtonData) > 0 ? self->wheel_up_ : self->wheel_down_) =
-                GetTickCount64();
+          if (raw.data.mouse.usButtonFlags & RI_MOUSE_WHEEL) {
+            // A notch is WHEEL_DELTA; fine-resolution wheels send less, counted once whole.
+            // A part left from long ago or the other way is not part of this notch.
+            const int delta = SHORT(raw.data.mouse.usButtonData);
+            const ULONGLONG now = GetTickCount64();
+            if (now - self->rest_at_ > 500) self->rest_up_ = self->rest_down_ = 0;
+            self->rest_at_ = now;
+            (delta > 0 ? self->rest_down_ : self->rest_up_) = 0;
+            int& rest = delta > 0 ? self->rest_up_ : self->rest_down_;
+            rest += std::abs(delta);
+            std::atomic<int>& notches = self->wheel_[delta > 0].notches;
+            for (int n = notches; !notches.compare_exchange_weak(n, std::min(n + rest / WHEEL_DELTA, 2));) {
+            }
+            rest %= WHEEL_DELTA;
+          }
         }
       }
     }
@@ -97,7 +129,15 @@ class Mouse {
     DestroyWindow(w);
   }
   std::atomic<long> dx_ = 0, dy_ = 0;
-  std::atomic<ULONGLONG> wheel_up_ = 0, wheel_down_ = 0;
+  struct Button {
+    std::atomic<int> notches = 0;  // not yet pressed (the mouse thread adds, polls take)
+    ULONGLONG since = 0;           // when pressed or released last (under the driver's lock)
+    bool pressed = false;
+  };
+  Button wheel_[2];                // [0] down, [1] up
+  // Fine-resolution wheel parts of a notch, and when the wheel turned last (mouse thread).
+  int rest_up_ = 0, rest_down_ = 0;
+  ULONGLONG rest_at_ = 0;
   std::atomic<DWORD> id_ = 0;
   std::thread thread_;
 };
@@ -118,8 +158,38 @@ class Driver final : public IInputDriver {
   }
 
   void Shutdown() override {
+    // Under the lock, and no polls subclass the window after this one.
+    std::lock_guard lock(mutex_);
+    shut_down_ = true;
     mouse_.reset();
     Lock(nullptr);
+    // The window keeps working without us: its own procedure back, if it is still ours.
+    if (subclassed_ && IsWindow(subclassed_) &&
+        GetWindowLongPtrW(subclassed_, GWLP_WNDPROC) == reinterpret_cast<LONG_PTR>(&HidePointer))
+      SetWindowLongPtrW(subclassed_, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previous_.load()));
+    subclassed_ = nullptr;
+  }
+
+  // The process's largest visible top-level window: the game's.
+  static HWND GameWindow() {
+    struct Best {
+      HWND window = nullptr;
+      LONG area = 0;
+    } best;
+    EnumWindows(
+        [](HWND w, LPARAM lp) -> BOOL {
+          DWORD process = 0;
+          GetWindowThreadProcessId(w, &process);
+          RECT r;
+          if (process == GetCurrentProcessId() && IsWindowVisible(w) && GetClientRect(w, &r)) {
+            auto& b = *reinterpret_cast<Best*>(lp);
+            const LONG area = (r.right - r.left) * (r.bottom - r.top);
+            if (area > b.area) b = {w, area};
+          }
+          return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&best));
+    return best.window;
   }
   u64 GetDeviceRevision() const override { return 1; }
 
@@ -148,6 +218,7 @@ class Driver final : public IInputDriver {
     last_ = now;
     if (!focused) {
       rate_x_ = rate_y_ = 0;
+      if (mouse_) mouse_->DropWheel();
       return state;
     }
     for (size_t i = 0; i < kControlCount; ++i)
@@ -214,13 +285,28 @@ class Driver final : public IInputDriver {
   // nothing of it shows.
   void Lock(HWND window) {
     hidden_ = window != nullptr;
-    if (window && !previous_ && !(GetWindowLongW(window, GWL_STYLE) & WS_CHILD) &&
-        IsWindowVisible(window)) {
-      previous_ = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC));
-      SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&HidePointer));
-      PostMessageW(window, WM_SETCURSOR, WPARAM(window), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    // The window subclassed is gone (the game made a new one): subclass the new one.
+    if (subclassed_ && !IsWindow(subclassed_)) {
+      subclassed_ = nullptr;
+      previous_ = nullptr;
     }
-    if (window) {
+    // Only the game's own window: the process's largest visible top-level window, not a dialog
+    // that happened to have the focus first. Looked for when the focus moves, and each second (the
+    // game's window can have the focus before it is shown).
+    if (window && !subclassed_ && !shut_down_ &&
+        (window != checked_ || GetTickCount64() - checked_at_ > 1000)) {
+      checked_ = window;
+      checked_at_ = GetTickCount64();
+      if (window == GameWindow()) {
+        previous_ = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC));
+        SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&HidePointer));
+        subclassed_ = window;
+        PostMessageW(window, WM_SETCURSOR, WPARAM(window), MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+      }
+    }
+    if (!window) checked_ = nullptr;
+    // The pointer is kept in the game's window only, never in a dialog of the process.
+    if (window && window == subclassed_) {
       RECT r;
       if (!GetClientRect(window, &r)) return;
       POINT a = {r.right - 1, r.bottom - 1};
@@ -235,6 +321,9 @@ class Driver final : public IInputDriver {
   }
 
   std::mutex mutex_;
+  bool shut_down_ = false;     // Shutdown ran: no more subclassing (under mutex_)
+  HWND checked_ = nullptr;     // the focused window last looked at by Lock, and when
+  ULONGLONG checked_at_ = 0;
   std::array<std::vector<int>, kControlCount> keys_;
   std::unique_ptr<Mouse> mouse_;
   std::chrono::steady_clock::time_point last_;
@@ -242,7 +331,8 @@ class Driver final : public IInputDriver {
   Settings settings_;
   bool locked_ = false;
   static inline std::atomic<bool> hidden_ = false;
-  static inline WNDPROC previous_ = nullptr;
+  static inline std::atomic<WNDPROC> previous_ = nullptr;
+  static inline HWND subclassed_ = nullptr;  // the window HidePointer is installed on
 };
 
 std::unique_ptr<IDriver> CreateDriver() { return std::make_unique<Driver>(); }

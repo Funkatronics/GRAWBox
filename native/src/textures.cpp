@@ -780,7 +780,9 @@ void TextureCache::UpdatePrompts(Texture& t, ID3D12GraphicsCommandList* list,
   std::vector<uint8_t> rgba;
   bool on = BuildPrompts(key, memory,
                          std::min<size_t>(t.base_bytes, t.layout.base.level_data_extent_bytes), &rgba);
-  if (on && !t.large) {
+  // The enlarged caps are made on the first upload and written again on every later one: the game
+  // can stream another prompt sheet into the same texture.
+  if (on) {
     const uint32_t w = key.width * kPromptScale, h = key.height * kPromptScale;
     const uint32_t pitch = (w * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) &
                            ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
@@ -794,11 +796,18 @@ void TextureCache::UpdatePrompts(Texture& t, ID3D12GraphicsCommandList* list,
     d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     d.SampleDesc.Count = 1;
     UploadPool::Alloc a;
+    const bool existed = bool(t.large);
     if (upload_.Allocate(uint64_t(pitch) * h, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT, frame_fence,
                          &a) &&
-        SUCCEEDED(device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d,
-                                                   D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                   IID_PPV_ARGS(t.large.GetAddressOf())))) {
+        (existed ||
+         SUCCEEDED(device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d,
+                                                    D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                    IID_PPV_ARGS(t.large.GetAddressOf()))))) {
+      if (existed) {
+        const D3D12_RESOURCE_BARRIER b =
+            TransitionBarrier(t.large.Get(), kShaderRead, D3D12_RESOURCE_STATE_COPY_DEST);
+        list->ResourceBarrier(1, &b);
+      }
       for (uint32_t y = 0; y < h; ++y)
         std::memcpy(a.cpu + size_t(y) * pitch, rgba.data() + size_t(y) * w * 4, size_t(w) * 4);
       D3D12_TEXTURE_COPY_LOCATION dst = {}, src = {};
