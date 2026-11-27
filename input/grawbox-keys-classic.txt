@@ -1,4 +1,5 @@
-# The first scheme, the same keys in both games. To use it, copy this file over grawbox-keys.txt.
+# The first scheme, the same keys in both games. In the launcher: Controls > Classic. Without the
+# launcher, copy this file over grawbox-keys.txt.
 mouse_sensitivity = 1.0
 mouse_deadzone = 0.24
 mouse_invert = 0
