@@ -41,10 +41,22 @@ std::wstring Env(const wchar_t* name) {
 
 // `whole`: only where it is not part of a longer word (a user name like "dev" must not turn
 // "device" into "<user>ice"); a path is replaced wherever it appears.
+// Case-insensitive (ASCII), as Windows paths and account names are: a log line with the profile
+// folder in other case, or a user name written "Dev" for "dev", still matches.
+size_t FindNoCase(const std::string& text, const std::string& what, size_t from) {
+  auto lower = [](char c) { return char(std::tolower(static_cast<unsigned char>(c))); };
+  for (size_t at = from; at + what.size() <= text.size(); ++at) {
+    size_t i = 0;
+    while (i < what.size() && lower(text[at + i]) == lower(what[i])) ++i;
+    if (i == what.size()) return at;
+  }
+  return std::string::npos;
+}
+
 void ReplaceAll(std::string& text, const std::string& what, const std::string& with, bool whole) {
   if (what.size() < 2) return;  // a one-letter name would garble the text
   auto word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
-  for (size_t at = 0; (at = text.find(what, at)) != std::string::npos;) {
+  for (size_t at = 0; (at = FindNoCase(text, what, at)) != std::string::npos;) {
     const size_t end = at + what.size();
     if (whole && ((at && word(text[at - 1])) || (end < text.size() && word(text[end])))) {
       at = end;
@@ -155,14 +167,25 @@ void Write(void (*screenshot)(const char* path)) {
   localtime_s(&local, &now);
   char stamp[32];
   std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &local);
-  const fs::path dir = base / "reports" / stamp;
+  // Two reports in the same second (a key repeat, a test trigger) get their own folders.
   std::error_code ec;
+  fs::path dir = base / "reports" / stamp;
+  for (int i = 1; fs::exists(dir, ec); ++i) {
+    if (i == 100) {
+      REXLOG_WARN("GRAW report: 100 reports in one second, not written");
+      return;
+    }
+    char suffix[8];
+    std::snprintf(suffix, sizeof(suffix), "-%02d", i);  // sorts by name: -09 before -10
+    dir = base / "reports" / (std::string(stamp) + suffix);
+  }
   fs::create_directories(dir, ec);
   if (ec) {
     REXLOG_WARN("GRAW report: cannot create the report folder ({})", ec.message());
     return;
   }
-  REXLOG_INFO("GRAW report: written at {} (build {})", stamp, GRAWBOX_BUILD);
+  REXLOG_INFO("GRAW report: written to reports/{} (build {})", Utf8(dir.filename().wstring()),
+              GRAWBOX_BUILD);
   if (screenshot) screenshot(Utf8((dir / "screenshot.png").wstring()).c_str());
   WriteText(dir / "info.txt", Info());
   if (auto log = REX_SETTINGS().Find("log.file_name"); log && !(*log)->GetText().empty())

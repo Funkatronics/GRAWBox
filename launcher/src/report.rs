@@ -8,8 +8,12 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// The issue form (.github/ISSUE_TEMPLATE/playtest.yml).
-const ISSUE_FORM: &str = "https://github.com/Funkatronics/GRAWBox/issues/new?template=playtest.yml";
+/// The repository the launcher was built from (build.rs), for the issue form
+/// (.github/ISSUE_TEMPLATE/playtest.yml); empty if not known.
+const REPO: &str = env!("GRAWBOX_REPO");
+
+/// How recent an F10 report must be to be packed: an older one is likely about something else.
+const FRESH: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 /// This build's id (build.rs).
 pub const BUILD: &str = env!("GRAWBOX_BUILD");
@@ -19,14 +23,16 @@ fn reports_dir(game: &Game) -> PathBuf {
     game.log().parent().map(|p| p.join("reports")).unwrap_or_default()
 }
 
-/// The newest folder a game's F10 wrote, if any.
+/// The newest folder a game's F10 wrote, if it was written in the last FRESH.
 fn newest_report(game: &Game) -> Option<PathBuf> {
-    fs::read_dir(reports_dir(game))
+    // By time, not name: several reports in one second differ only by a suffix.
+    let (modified, path) = fs::read_dir(reports_dir(game))
         .ok()?
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_dir())
-        .max_by_key(|e| e.file_name())
-        .map(|e| e.path())
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .max_by_key(|(m, _)| *m)?;
+    (modified.elapsed().ok()? < FRESH).then_some(path)
 }
 
 /// Replaces the user's profile folder, user name and computer name, as the game does: the folder
@@ -35,46 +41,50 @@ fn newest_report(game: &Game) -> Option<PathBuf> {
 pub fn scrub(text: &str) -> String {
     let mut out = text.to_string();
     if let Ok(profile) = std::env::var("USERPROFILE") {
-        if profile.len() >= 2 {
-            out = out.replace(&profile.replace('/', "\\"), "<profile>");
-            out = out.replace(&profile.replace('\\', "/"), "<profile>");
-        }
+        out = replace(&out, &profile.replace('/', "\\"), "<profile>", false);
+        out = replace(&out, &profile.replace('\\', "/"), "<profile>", false);
     }
     for (var, tag) in [("USERNAME", "<user>"), ("COMPUTERNAME", "<computer>")] {
         if let Ok(name) = std::env::var(var) {
-            out = replace_word(&out, &name, tag);
+            out = replace(&out, &name, tag, true);
         }
     }
     out
 }
 
-fn replace_word(text: &str, word: &str, with: &str) -> String {
-    if word.len() < 2 {
+/// Replaces `what` ignoring ASCII case, as Windows paths and account names are compared (a log
+/// may print the profile folder in other case, a user "Dev" may appear as "dev"); with `whole`,
+/// only where it is not part of a longer word.
+fn replace(text: &str, what: &str, with: &str, whole: bool) -> String {
+    if what.len() < 2 {
         return text.to_string();
     }
+    let lower_text = text.to_ascii_lowercase();
+    let lower_what = what.to_ascii_lowercase();
     let is_word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
     let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(word) {
-        let before = rest[..at].chars().next_back().or_else(|| out.chars().next_back());
-        let after = rest[at + word.len()..].chars().next();
-        out.push_str(&rest[..at]);
-        if is_word(before) || is_word(after) {
-            out.push_str(word);
-        } else {
-            out.push_str(with);
-        }
-        rest = &rest[at + word.len()..];
+    let mut at = 0;
+    // ASCII lowercasing keeps byte offsets, so positions in the lowered copy fit the original.
+    while let Some(found) = lower_text[at..].find(&lower_what) {
+        let start = at + found;
+        let end = start + what.len();
+        let keep = whole && (is_word(text[..start].chars().next_back()) || is_word(text[end..].chars().next()));
+        out.push_str(&text[at..start]);
+        out.push_str(if keep { &text[start..end] } else { with });
+        at = end;
     }
-    out.push_str(rest);
+    out.push_str(&text[at..]);
     out
 }
 
-/// Packs the report and returns the zip's path.
-pub fn pack(game: &Game, settings_file: &Path) -> io::Result<PathBuf> {
+/// Packs the report and returns the zip's path and the F10 report it holds (its folder name), if
+/// one was recent enough.
+pub fn pack(game: &Game, settings_file: &Path) -> io::Result<(PathBuf, Option<String>)> {
     let mut zip = Zip::default();
     let stamp = chrono_stamp();
-    match newest_report(game) {
+    let report = newest_report(game);
+    let used = report.as_ref().map(|d| d.file_name().unwrap_or_default().to_string_lossy().to_string());
+    match report {
         Some(dir) => {
             for entry in fs::read_dir(&dir)? {
                 let path = entry?.path();
@@ -109,15 +119,23 @@ pub fn pack(game: &Game, settings_file: &Path) -> io::Result<PathBuf> {
     let out = reports_dir(game).join(format!("report-{}-{stamp}.zip", game.id));
     fs::create_dir_all(reports_dir(game))?;
     fs::write(&out, zip.finish())?;
-    Ok(out)
+    Ok((out, used))
 }
 
-/// Shows the zip in Explorer and opens the issue form with the game and version filled in.
-pub fn show(zip: &Path, game: &Game) {
+/// Shows the zip in Explorer and opens the issue form with the game and version filled in. False if
+/// the form could not be opened (the launcher was built without a GitHub remote).
+pub fn show(zip: &Path, game: &Game) -> bool {
     let _ = std::process::Command::new("explorer").arg(format!("/select,{}", zip.display())).spawn();
     let label = if game.id == "graw1" { "Advanced Warfighter (GRAW 1)" } else { "Advanced Warfighter 2 (GRAW 2)" };
-    let url = format!("{ISSUE_FORM}&game={}&version={}", encode(label), encode(BUILD));
-    let _ = std::process::Command::new("explorer").arg(url).spawn();
+    if !REPO.is_empty() {
+        let url = format!(
+            "{REPO}/issues/new?template=playtest.yml&game={}&version={}",
+            encode(label),
+            encode(BUILD)
+        );
+        return std::process::Command::new("explorer").arg(url).spawn().is_ok();
+    }
+    false
 }
 
 fn encode(s: &str) -> String {
@@ -257,8 +275,14 @@ mod tests {
 
     #[test]
     fn whole_words_only() {
-        assert_eq!(replace_word("x/dev/y and dev, device", "dev", "<user>"),
+        assert_eq!(replace("x/dev/y and dev, device", "dev", "<user>", true),
                    "x/<user>/y and <user>, device");
-        assert_eq!(replace_word("devdev dev", "dev", "<user>"), "devdev <user>");
+        assert_eq!(replace("devdev dev", "dev", "<user>", true), "devdev <user>");
+    }
+
+    #[test]
+    fn any_case() {
+        assert_eq!(replace("Dev and DEV", "dev", "<user>", true), "<user> and <user>");
+        assert_eq!(replace("x/Users/Dev/y", "users/dev", "<profile>", false), "x/<profile>/y");
     }
 }

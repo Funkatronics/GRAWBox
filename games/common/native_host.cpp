@@ -66,6 +66,14 @@ decltype(&grawbox_native_start) g_start = nullptr;
 decltype(&grawbox_native_call) g_call = nullptr;
 decltype(&grawbox_native_request_switch) g_request_switch = nullptr;
 decltype(&grawbox_native_request_screenshot) g_request_screenshot = nullptr;  // optional
+decltype(&grawbox_native_drawing) g_native_drawing = nullptr;  // whether native presents now
+
+// The screenshot request, while the native renderer presents (after F9 the emulated one does, and
+// nothing would take it).
+void (*ReportScreenshot())(const char*) {
+  return g_request_screenshot && g_native_drawing && g_native_drawing() ? g_request_screenshot
+                                                                         : nullptr;
+}
 
 // F10 in the game's window: a playtest report (report.h). Polled at each Swap.
 void PollReportKey() {
@@ -77,14 +85,14 @@ void PollReportKey() {
   DWORD process = 0;
   GetWindowThreadProcessId(GetForegroundWindow(), &process);
   const bool now = process == GetCurrentProcessId() && (GetAsyncKeyState(VK_F10) & 0x8000) != 0;
-  if (now && !down) report::Write(g_request_screenshot);
+  if (now && !down) report::Write(ReportScreenshot());
   // Unattended tests: GRAWBOX_REPORT_AT_FRAME=<n> writes one report at that Swap.
   static const long at = [] {
     char v[16] = {};
     return GetEnvironmentVariableA("GRAWBOX_REPORT_AT_FRAME", v, sizeof(v)) ? std::atol(v) : -1L;
   }();
   static long frame = 0;
-  if (at >= 0 && frame++ == at) report::Write(g_request_screenshot);
+  if (at >= 0 && frame++ == at) report::Write(ReportScreenshot());
   down = now;
 }
 void (*g_gpu_draws)(bool) = nullptr;
@@ -278,6 +286,8 @@ bool Start() {
     return false;
   g_request_screenshot = reinterpret_cast<decltype(g_request_screenshot)>(
       GetProcAddress(native, "grawbox_native_request_screenshot"));
+  g_native_drawing = reinterpret_cast<decltype(g_native_drawing)>(
+      GetProcAddress(native, "grawbox_native_drawing"));
   rex::kernel::ThreadState* thread = rex::kernel::ThreadState::Get();
   if (!thread || !thread->GetAddressSpace()) return false;
   g_memory = thread->GetAddressSpace();
