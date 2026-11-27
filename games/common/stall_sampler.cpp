@@ -4,10 +4,11 @@
 #include <rex/ppc/recompiled_code.h>
 
 #include <windows.h>
+#include <winternl.h>
 
 #include <algorithm>
-#include <cctype>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <map>
@@ -26,137 +27,183 @@ constexpr auto kSampleAfter = std::chrono::milliseconds(50);
 constexpr auto kSampleEvery = std::chrono::milliseconds(2);
 constexpr auto kLogFrom = std::chrono::milliseconds(100);
 constexpr int kLinesPerMinute = 20;
+constexpr size_t kStackCopy = 32 * 1024;  // bytes of the game thread's stack scanned per sample
 
-std::atomic<int64_t> g_last_swap{0};  // Clock ticks of the last Heartbeat
-HANDLE g_game_thread = nullptr;
+// Never destroyed: the sampler thread is detached and may still run while the program exits.
+struct State {
+  std::atomic<int64_t> last_swap{0};  // Clock ticks of the last Heartbeat
+  std::mutex mutex;                    // the fields below
+  DWORD thread_id = 0;                 // the thread that swaps
+  HANDLE thread = nullptr;
+  uintptr_t stack_base = 0;            // its stack's upper end (from its TEB)
+  std::map<std::string, int> samples;  // this frame's
+  // Host address -> guest function, and the bounds of the translated code.
+  std::vector<std::pair<uintptr_t, uint32_t>> functions;
+  uintptr_t code_begin = 0, code_end = 0;
+};
+State& S() {
+  static State* s = new State;
+  return *s;
+}
 
-std::mutex g_mutex;  // the samples of the current frame
-std::map<std::string, int> g_samples;
-
-// Host address -> guest function, and the bounds of the translated code.
-std::vector<std::pair<uintptr_t, uint32_t>> g_functions;
-uintptr_t g_code_begin = 0, g_code_end = 0;
-
-void BuildFunctionTable() {
+void BuildFunctionTable(State& s) {
   for (const PPCFuncMapping* m = kPPCFuncMappings; m->host; ++m)
-    g_functions.push_back({reinterpret_cast<uintptr_t>(m->host), uint32_t(m->address)});
-  std::sort(g_functions.begin(), g_functions.end());
+    s.functions.push_back({reinterpret_cast<uintptr_t>(m->host), uint32_t(m->address)});
+  std::sort(s.functions.begin(), s.functions.end());
   // The translated code is the executable's "rexguest" section (REX_RECOMPILED_CODE_SECTION).
   auto* image = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
   auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(image);
   auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(image + dos->e_lfanew);
-  IMAGE_SECTION_HEADER* s = IMAGE_FIRST_SECTION(nt);
-  for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++s)
-    if (!strncmp(reinterpret_cast<const char*>(s->Name), "rexguest", 8)) {
-      g_code_begin = reinterpret_cast<uintptr_t>(image + s->VirtualAddress);
-      g_code_end = g_code_begin + s->Misc.VirtualSize;
+  IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
+  for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section)
+    if (!strncmp(reinterpret_cast<const char*>(section->Name), "rexguest", 8)) {
+      s.code_begin = reinterpret_cast<uintptr_t>(image + section->VirtualAddress);
+      s.code_end = s.code_begin + section->Misc.VirtualSize;
     }
 }
 
-std::string Place(uintptr_t rip) {
-  char text[64];
-  if (rip >= g_code_begin && rip < g_code_end) {
-    auto it = std::upper_bound(g_functions.begin(), g_functions.end(),
-                               std::make_pair(rip, ~uint32_t(0)));
-    if (it != g_functions.begin()) {
-      std::snprintf(text, sizeof(text), "sub_%08X", std::prev(it)->second);
-      return text;
-    }
-  }
+// The game function at `address` (the nearest mapped start below it: approximate, since helper
+// code in the section is credited to the function before it), else empty.
+std::string GameFunction(const State& s, uintptr_t address) {
+  if (address < s.code_begin || address >= s.code_end) return {};
+  auto it = std::upper_bound(s.functions.begin(), s.functions.end(),
+                             std::make_pair(address, ~uint32_t(0)));
+  if (it == s.functions.begin()) return {};
+  char text[16];
+  std::snprintf(text, sizeof(text), "sub_%08X", std::prev(it)->second);
+  return text;
+}
+
+std::string ModuleName(uintptr_t address) {
   HMODULE module = nullptr;
   wchar_t path[MAX_PATH] = {};
-  if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                         reinterpret_cast<LPCWSTR>(rip), &module) &&
-      GetModuleFileNameW(module, path, MAX_PATH)) {
-    const wchar_t* name = wcsrchr(path, L'\\');
-    name = name ? name + 1 : path;
-    std::string ascii;
-    for (; *name; ++name) ascii += *name < 128 ? char(*name) : '?';
-    return ascii;
-  }
-  return "unknown";
+  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                              GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          reinterpret_cast<LPCWSTR>(address), &module) ||
+      !GetModuleFileNameW(module, path, MAX_PATH))
+    return {};
+  const wchar_t* name = wcsrchr(path, L'\\');
+  name = name ? name + 1 : path;
+  std::string ascii;
+  for (; *name; ++name) ascii += *name < 128 ? char(*name) : '?';
+  return ascii;
 }
 
 // Windows and the C++ runtime: a wait or lock in them is named by the module that called them.
 bool SystemModule(const std::string& name) {
   std::string n;
   for (char ch : name) n += char(std::tolower(static_cast<unsigned char>(ch)));
-  for (const char* s : {"ntdll.dll", "kernelbase.dll", "kernel32.dll", "msvcp140.dll",
+  for (const char* m : {"ntdll.dll", "kernelbase.dll", "kernel32.dll", "msvcp140.dll",
                         "vcruntime140.dll", "vcruntime140_1.dll", "ucrtbase.dll"})
-    if (n == s) return true;
+    if (n == m) return true;
   return false;
 }
 
+uintptr_t StackBase(HANDLE thread) {
+  struct ThreadInfo {  // THREAD_BASIC_INFORMATION
+    LONG exit_status;
+    PVOID teb;
+    CLIENT_ID client;
+    ULONG_PTR affinity;
+    LONG priority, base_priority;
+  } info{};
+  using Query = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+  static auto query = reinterpret_cast<Query>(
+      GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread"));
+  NT_TIB tib{};
+  SIZE_T read = 0;
+  if (!query || query(thread, 0 /* ThreadBasicInformation */, &info, sizeof(info), nullptr) < 0 ||
+      !ReadProcessMemory(GetCurrentProcess(), info.teb, &tib, sizeof(tib), &read))
+    return 0;
+  return reinterpret_cast<uintptr_t>(tib.StackBase);
+}
+
 void Sampler() {
-  BuildFunctionTable();
+  State& s = S();
+  BuildFunctionTable(s);
+  std::vector<uintptr_t> stack(kStackCopy / sizeof(uintptr_t));
   for (;;) {
     std::this_thread::sleep_for(kSampleEvery);
-    const int64_t last = g_last_swap.load(std::memory_order_relaxed);
+    const int64_t last = s.last_swap.load(std::memory_order_relaxed);
     if (Clock::now().time_since_epoch().count() - last <
         std::chrono::duration_cast<Clock::duration>(kSampleAfter).count())
       continue;
-    // The instruction pointer and, by unwinding the stack while the thread is suspended (as
-    // sampling profilers do; nothing is allocated meanwhile), up to kFrames return addresses.
-    constexpr int kFrames = 24;
-    uintptr_t frames[kFrames];
-    int count = 0;
-    if (SuspendThread(g_game_thread) == DWORD(-1)) continue;
+    HANDLE thread;
+    uintptr_t stack_base;
+    {
+      std::lock_guard lock(s.mutex);
+      thread = s.thread;
+      stack_base = s.stack_base;
+    }
+    if (!thread) continue;
+    // While suspended: only the registers and a copy of the stack (ReadProcessMemory fails
+    // instead of faulting). Nothing that takes a lock the game thread might hold.
+    if (SuspendThread(thread) == DWORD(-1)) continue;
     CONTEXT c{};
-    c.ContextFlags = CONTEXT_FULL;
-    if (GetThreadContext(g_game_thread, &c)) {
-      while (count < kFrames && c.Rip) {
-        frames[count++] = uintptr_t(c.Rip);
-        DWORD64 image = 0;
-        PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(c.Rip, &image, nullptr);
-        if (!f) {  // a leaf function: its return address is on top of the stack
-          c.Rip = *reinterpret_cast<DWORD64*>(c.Rsp);
-          c.Rsp += 8;
-          continue;
+    c.ContextFlags = CONTEXT_CONTROL;
+    size_t words = 0;
+    if (GetThreadContext(thread, &c) && stack_base > c.Rsp) {
+      const size_t bytes = std::min<size_t>(kStackCopy, stack_base - c.Rsp);
+      SIZE_T read = 0;
+      if (ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(c.Rsp), stack.data(),
+                            bytes, &read))
+        words = read / sizeof(uintptr_t);
+    }
+    ResumeThread(thread);
+    if (!c.Rip) continue;
+    // Where it is; if that is not a game function, the first of our modules and the first game
+    // function found among the return addresses on its stack (a scan, so approximate):
+    // "ntdll.dll < rexkernel.dll < sub_82101798".
+    std::string place = GameFunction(s, uintptr_t(c.Rip));
+    if (place.empty()) {
+      place = ModuleName(uintptr_t(c.Rip));
+      if (place.empty()) place = "unknown";
+      std::string caller, game;
+      for (size_t i = 0; i < words && game.empty(); ++i) {
+        const uintptr_t v = stack[i];
+        if (v < 0x10000) continue;
+        game = GameFunction(s, v);
+        if (game.empty() && caller.empty()) {
+          const std::string m = ModuleName(v);
+          if (!m.empty() && m != place && !SystemModule(m)) caller = m;
         }
-        void* handler_data = nullptr;
-        DWORD64 frame = 0;
-        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, c.Rip, f, &c, &handler_data, &frame, nullptr);
       }
-    }
-    ResumeThread(g_game_thread);
-    if (!count) continue;
-    // Where it is, the first of our modules or the game below a system module, and the first
-    // game function: "ntdll.dll < rexkernel.dll < sub_82101798".
-    std::string place = Place(frames[0]);
-    std::string caller, game;
-    for (int i = 1; i < count && game.empty(); ++i) {
-      const std::string p = Place(frames[i]);
-      if (p.starts_with("sub_")) game = p;
-      else if (caller.empty() && p != place && !SystemModule(p))
-        caller = p;
-    }
-    if (!place.starts_with("sub_")) {
       if (!caller.empty()) place += " < " + caller;
       if (!game.empty()) place += " < " + game;
     }
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(s.mutex);
     // Only if the frame is still the one being sampled (no swap in between).
-    if (g_last_swap.load(std::memory_order_relaxed) == last) ++g_samples[place];
+    if (s.last_swap.load(std::memory_order_relaxed) == last) ++s.samples[place];
   }
 }
 
 }  // namespace
 
 void Heartbeat() {
+  State& s = S();
   const int64_t now = Clock::now().time_since_epoch().count();
-  const int64_t last = g_last_swap.exchange(now, std::memory_order_relaxed);
-  if (!last) {
-    // The first frame: the sampler watches this thread from now on.
-    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_game_thread,
-                    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, 0);
-    std::thread(Sampler).detach();
-    return;
-  }
+  const int64_t last = s.last_swap.exchange(now, std::memory_order_relaxed);
   std::map<std::string, int> samples;
   {
-    std::lock_guard lock(g_mutex);
-    samples.swap(g_samples);
+    std::lock_guard lock(s.mutex);
+    // Follow the thread that swaps, should it ever change.
+    if (s.thread_id != GetCurrentThreadId()) {
+      if (s.thread) CloseHandle(s.thread);
+      s.thread = nullptr;
+      s.thread_id = GetCurrentThreadId();
+      if (DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &s.thread,
+                          THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
+                          FALSE, 0))
+        s.stack_base = StackBase(s.thread);
+      else
+        REXLOG_WARN("GRAW stall: cannot watch the game thread ({}), no stall lines",
+                    GetLastError());
+    }
+    samples.swap(s.samples);
+  }
+  if (!last) {
+    std::thread(Sampler).detach();
+    return;
   }
   const auto frame = Clock::duration(now - last);
   if (frame < kLogFrom || samples.empty()) return;
@@ -176,13 +223,12 @@ void Heartbeat() {
   std::sort(top.rbegin(), top.rend());
   std::string list;
   for (size_t i = 0; i < top.size() && i < 6; ++i) {
-    char item[96];
-    std::snprintf(item, sizeof(item), "%s%s %d%%", i ? ", " : "", top[i].second.c_str(),
-                  100 * top[i].first / total);
-    list += item;
+    if (i) list += ", ";
+    list += top[i].second + " " + std::to_string(100 * top[i].first / total) + "%";
   }
-  REXLOG_INFO("GRAW stall: frame took {:.0f} ms, {} samples of the game thread after 50 ms: {}",
-              std::chrono::duration<double, std::milli>(frame).count(), total, list);
+  REXLOG_INFO("GRAW stall: frame took {:.0f} ms, {} samples of the game thread after {} ms: {}",
+              std::chrono::duration<double, std::milli>(frame).count(), total,
+              std::chrono::duration_cast<std::chrono::milliseconds>(kSampleAfter).count(), list);
 }
 
 }  // namespace grawbox::stall
