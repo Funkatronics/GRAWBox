@@ -31,6 +31,13 @@ Updated 2026-11-27. "WARP" is the software GPU used for automated runs; "tester"
   on the game's window (#25); the present fits 16:9 again (#27); each wheel notch one timed press (#29).
 - GRAW 1 prompts (#12): the X, Y, trigger and BACK sheets don't load in the first 650 s of training, so they weren't
   found yet. `GRAWBOX_NATIVE_PROMPT_DUMP=<folder>` dumps the small textures to look for them.
+- **DRED** (#8): the game turns on D3D12 Device Removed Extended Data at start (`GRAWBOX_DRED=0` turns it off; the start
+  line says which). A lost device now logs its reason, the GPU's last operations and any page fault, in both renderers.
+- **HUD size** for GRAW 1 (#17, draft #48): scaling the GUI map works in gameplay (world markers stay on target), but
+  menus and their full-screen backgrounds shrink too, and the pause menu's scissor isn't scaled. A world-camera check
+  doesn't separate them (GRAW 1 sets one up behind the front-end menus). Parked.
+- **Frame cap** (#2): GRAW 2's wait at 0x82101798 is a per-frame worker loop on an event set by `sub_82101228` and
+  `sub_82101E88`; the SleepEx(0) callers are yields, not a limiter. Details on the issue; needs a real-GPU trace.
 
 ## Open
 
