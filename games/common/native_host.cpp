@@ -16,6 +16,7 @@
 #include <windows.h>
 #include <d3d12.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cstdlib>
@@ -51,6 +52,11 @@ double AspectRatio() {
 bool HudCentered() {
   static const bool centered = Settings().hud_layout.Get() != "stretched";
   return centered;
+}
+
+double HudScale() {
+  static const double scale = std::clamp(Settings().hud_scale.Get(), 50, 100) / 100.0;
+  return scale;
 }
 
 namespace {

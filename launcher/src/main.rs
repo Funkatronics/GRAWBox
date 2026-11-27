@@ -271,6 +271,9 @@ impl App {
                 row(ui, "HUD on wide screens", "Centered keeps menus and HUD 16:9 in the middle; stretched spreads them across.", |ui| {
                     choice(ui, &mut s.hud_layout, &[("centered", "Centered 16:9"), ("stretched", "Stretched")]);
                 });
+                row(ui, "HUD size", "GRAW 1 only, for now: smaller menus and HUD, toward the middle. Markers on the world stay where they are.", |ui| {
+                    ui.add(egui::Slider::new(&mut s.hud_scale, 50..=100).step_by(5.0).suffix(" %"));
+                });
             });
         });
         let native = s.renderer == "native";
