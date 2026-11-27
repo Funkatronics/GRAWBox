@@ -11,6 +11,19 @@ Updated 2026-11-26. "WARP" is the software GPU used for automated runs; "tester"
 - Cross-Com works in both. Shadows match the emulated renderer. GRAW 2's horizontal line and the ghosting are gone.
 - Haze redone (`native.haze`), random drift as its motion. Ambient occlusion and sharpening work in both, off by default.
 - Keyboard and mouse work in gameplay in both (tester), with key caps in the prompts (GRAW 1: partly).
+- Open work is tracked in GitHub issues; this file keeps findings and the state of things.
+- **Playtest reports** (#31): F10 in a game writes `reports\<time>\` beside the log (log tail, screenshot, frame stats
+  tail, system info, keys; paths and names scrubbed). The launcher's "Report a problem" packs it with settings and saves
+  and opens the playtest issue form. Every build has an id from `git describe`, logged at start and in reports.
+- **Shader stutter** (#1): hitch lines in the log name their cause; "Wait for new shaders" can be turned off (tester:
+  much smoother, brief pop-in). Recipes (`tools/make_recipes.ps1`, `grawbox-recipes.bin` beside the program) plus the
+  games' own shaders from `NewYetiShadersX360.sdf` warm pixel stages before play; on a real GPU the fresh-cache shader
+  waits went from 116 ms to 16 ms. Next: rebuild the drawn vertex shaders from the .sdf. They differ from the disc copies
+  only in vertex fetch instructions (runs of three dwords: fetch register, format/stride, offset), patched for the vertex
+  layout; a recipe can carry those dwords and the disc shader's hash, as COGBox does for Gears.
+- **Long stalls** (#34): the game thread waiting for other game threads (WaitForMultipleObjects in what looks like the
+  main loop, `sub_822451F8` in GRAW 1). The stall sampler logs where the game thread was and which other threads were
+  busy; the next playtest should say what the main thread waits for.
 
 ## Open
 
@@ -138,4 +151,5 @@ Updated 2026-11-26. "WARP" is the software GPU used for automated runs; "tester"
 
 ## Next
 
-The tester's flicker and key results; the launcher on a real GPU.
+A playtest with the stall sampler and threads lines (#34); the vertex shader rebuild for full recipes (#1); the
+launcher's Report a problem button on a real install (#31).
