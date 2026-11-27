@@ -96,6 +96,7 @@ REXCVAR_DEFINE_INT32(graw_native_draw_log_frames, 1, "GRAW native",
 REXCVAR_DECLARE(int32_t, graw_native_anisotropy);  // native_cvars.cpp, both backends
 REXCVAR_DECLARE(double, graw_native_mip_bias);
 REXCVAR_DECLARE(double, graw_native_aspect);  // native_cvars.cpp
+REXCVAR_DECLARE(std::string, graw_native_hud_layout);
 REXCVAR_DECLARE(std::string, graw_native_capture_dir);
 namespace rex::graphics {
 extern bool g_dxbc_implicit_gradients;  // dxbc_translator_fetch.cpp (local SDK experiment)
@@ -297,6 +298,155 @@ bool OverlayIs16x9(const DrawState& s, float& k) {
   return true;
 }
 
+// The HUD at the edges of a wide picture (--graw_native_hud_layout=edges). The games draw menus
+// and HUD in 1280x720 pixels through one pixel-to-clip map (c0 = (2k/1280, 0, 0, -k),
+// c1 = (0, -2/720, 0, 1)), which the game hook narrows by k = 16:9 over the aspect so they keep
+// their shape in the middle 16:9. Here each element of a HUD draw is moved out instead: its
+// middle goes where the picture's stretch across the wide screen puts it, and it keeps its shape;
+// one wider than 60 % of the screen (the HUD frame, GRAW 2's top bar: single textured quads) is
+// stretched itself, so what sits on it stays lined up with it. An element is a run of the draw's quads on one line with gaps of at most 24 pixels
+// (a line of text stays together). The positions are moved in guest memory before the mirror
+// copies them; the games write these vertices fresh each frame, and a draw whose bytes are
+// already moved (same hash as after the last move) is left alone.
+class HudEdges {
+ public:
+  // The guest range whose bytes were moved (length 0: none): the caller has the mirror copy it
+  // as it is now, since pages it copied before count as current.
+  struct Moved {
+    uint32_t start = 0, length = 0;
+  };
+  Moved Apply(const DrawState& s, const rex::graphics::Shader& vs, uint8_t* membase) {
+    static const float k = [] {
+      const double aspect = REXCVAR_GET(graw_native_aspect);
+      return aspect > 16.0 / 9.0 + 0.01 ? float(16.0 / 9.0 / aspect) : 1.0f;
+    }();
+    static const bool on = REXCVAR_GET(graw_native_hud_layout) == "edges";
+    if (!on || k == 1.0f) return {};
+    const auto prim = xenos::PrimitiveType(s.primitive);
+    if (s.indexed) return {};
+    const bool quads = prim == xenos::PrimitiveType::kQuadList && s.count % 4 == 0;
+    const bool strip = prim == xenos::PrimitiveType::kTriangleStrip && s.count == 4;
+    if (!(quads || strip) || (s.regs[XE_GPU_REG_RB_SURFACE_INFO] & 0x3FFF) != 1280) return {};
+    const uint32_t* c = &s.regs[XE_GPU_REG_SHADER_CONSTANT_000_X];
+    auto f = [&](uint32_t i) { return std::bit_cast<float>(c[i]); };
+    if (std::fabs(f(0) * 640.0f - k) > 1e-3f || std::fabs(f(3) + k) > 1e-3f || f(1) != 0 ||
+        f(2) != 0 || f(4) != 0 || std::fabs(f(5) * 360.0f + 1.0f) > 1e-3f || f(6) != 0 ||
+        std::fabs(f(7) - 1.0f) > 1e-3f)
+      return {};
+    // The position: four signed 16-bit integers at the start of each vertex, x in the high half
+    // of the first big-endian dword. The draw's vertices start at the index offset (the HUD's
+    // draws share one buffer).
+    const auto& bindings = vs.vertex_bindings();
+    if (bindings.empty() || bindings[0].attributes.empty()) return {};
+    const auto& b = bindings[0];
+    const auto& a = b.attributes[0].fetch_instr.attributes;
+    if (a.data_format != xenos::VertexFormat::k_16_16_16_16 || a.offset != 0 || !a.is_integer ||
+        !a.is_signed || !b.stride_words)
+      return {};
+    const auto& regs = *reinterpret_cast<const rex::graphics::RegisterFile*>(s.regs);
+    const xenos::xe_gpu_vertex_fetch_t vf = regs.GetVertexFetch(b.fetch_constant);
+    if (vf.type != xenos::FetchConstantType::kVertex ||
+        xenos::Endian(vf.endian) != xenos::Endian::k8in32)
+      return {};
+    const uint32_t stride = b.stride_words * 4;
+    const uint32_t first = s.regs[XE_GPU_REG_VGT_INDX_OFFSET];
+    const uint64_t end = (uint64_t(first) + s.count) * stride;
+    if (end > (uint64_t(vf.size) << 2) || (uint64_t(vf.address) << 2) + end > (uint64_t(512) << 20))
+      return {};
+    const uint32_t base = (vf.address << 2) + first * stride, bytes = s.count * stride;
+    uint8_t* v = membase + base;
+    const uint64_t before = XXH3_64bits(v, bytes);
+    if (auto it = moved_.find(base); it != moved_.end() && it->second == before)
+      return {base, bytes};
+
+    auto x_at = [&](uint32_t i) { return int16_t(v[i * stride] << 8 | v[i * stride + 1]); };
+    auto y_at = [&](uint32_t i) { return int16_t(v[i * stride + 2] << 8 | v[i * stride + 3]); };
+    const uint32_t n = s.count / 4;
+    std::vector<Box> boxes(n);
+    for (uint32_t q = 0; q < n; ++q) {
+      Box& bx = boxes[q];
+      bx = {INT32_MAX, INT32_MIN, INT32_MAX, INT32_MIN, int(q)};
+      for (uint32_t i = q * 4; i < q * 4 + 4; ++i) {
+        bx.x0 = std::min<int>(bx.x0, x_at(i));
+        bx.x1 = std::max<int>(bx.x1, x_at(i));
+        bx.y0 = std::min<int>(bx.y0, y_at(i));
+        bx.y1 = std::max<int>(bx.y1, y_at(i));
+      }
+    }
+    // Groups: quads on one line (their heights overlap) less than 24 pixels apart.
+    auto root = [&](int q) {
+      while (boxes[q].group != q) q = boxes[q].group = boxes[boxes[q].group].group;
+      return q;
+    };
+    for (uint32_t p = 0; p < n; ++p)
+      for (uint32_t q = p + 1; q < n; ++q) {
+        const Box &bp = boxes[p], &bq = boxes[q];
+        const bool line = bp.y0 <= bq.y1 && bq.y0 <= bp.y1;
+        const int gap = std::max(bp.x0, bq.x0) - std::min(bp.x1, bq.x1);
+        if (line && gap <= 24) boxes[root(int(p))].group = root(int(q));
+      }
+    std::unordered_map<int, Box> groups;  // root -> extent with its line's recent elements
+    std::unordered_map<int, int> widths;  // root -> width as drawn here (what spreads)
+    for (uint32_t q = 0; q < n; ++q) {
+      auto [it, added] = groups.try_emplace(root(int(q)), boxes[q]);
+      Box& g = it->second;
+      g.x0 = std::min(g.x0, boxes[q].x0);
+      g.x1 = std::max(g.x1, boxes[q].x1);
+      g.y0 = std::min(g.y0, boxes[q].y0);
+      g.y1 = std::max(g.y1, boxes[q].y1);
+    }
+    // A line of text can span draws (one per font page): a group also takes in the elements of
+    // the last second's draws on its line within 24 pixels, so a letter drawn alone stays with
+    // its line. Their extents are recorded unmoved.
+    const uint64_t now = GetTickCount64();
+    std::erase_if(recent_, [&](const Recent& r) { return now - r.at > 1000; });
+    if (recent_.size() > 2048) recent_.clear();
+    for (auto& [key, g] : groups) {
+      const Box drawn = g;
+      for (const Recent& r : recent_) {
+        const bool line = g.y0 <= r.box.y1 && r.box.y0 <= g.y1;
+        if (line && std::max(g.x0, r.box.x0) - std::min(g.x1, r.box.x1) <= 24) {
+          g.x0 = std::min(g.x0, r.box.x0);
+          g.x1 = std::max(g.x1, r.box.x1);
+        }
+      }
+      recent_.push_back({drawn, now});
+      widths[key] = drawn.x1 - drawn.x0;
+    }
+    for (uint32_t q = 0; q < n; ++q) {
+      const Box& g = groups[root(int(q))];
+      const int x0 = g.x0, x1 = g.x1;
+      const float middle = 0.5f * float(x0 + x1);
+      const bool across = widths[root(int(q))] > 768;
+      // Where the wide picture's stretch puts the element's middle, the element keeping its shape.
+      const float shift = (middle - 640.0f) * (1.0f / k - 1.0f);
+      if (!across && shift == 0.0f) continue;
+      for (uint32_t i = q * 4; i < q * 4 + 4; ++i) {
+        const float x = x_at(i);
+        const float moved = across ? 640.0f + (x - 640.0f) / k : x + shift;
+        const int16_t m = int16_t(std::clamp(std::lround(moved), -32768L, 32767L));
+        v[i * stride] = uint8_t(uint16_t(m) >> 8);
+        v[i * stride + 1] = uint8_t(m);
+      }
+    }
+    if (moved_.size() > 4096) moved_.clear();
+    moved_[base] = XXH3_64bits(v, bytes);
+    return {base, bytes};
+  }
+
+ private:
+  std::unordered_map<uint32_t, uint64_t> moved_;  // vertex address -> hash after the move
+  struct Box {
+    int x0, x1, y0, y1;
+    int group;
+  };
+  struct Recent {
+    Box box;
+    uint64_t at;
+  };
+  std::vector<Recent> recent_;
+};
+
 bool IsHazeShader(uint64_t ucode_hash) {
   return ucode_hash == 0xCFC1BD3557C8B735ull ||  // GRAW 1
          ucode_hash == 0xF17045F9B4E36E54ull;   // GRAW 2
@@ -344,6 +494,7 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   ID3D12Device* device = nullptr;
   rex::memory::Memory* memory = nullptr;
   const uint8_t* membase = nullptr;
+  HudEdges hud_edges;  // RequestVertices' thread (the guest thread in render thread mode)
   ShaderCache shaders;
   BoolSpecializer vs_bools{shaders}, ps_bools{shaders};
   bool bool_specialize = REXCVAR_GET(graw_native_bool_specialize);
@@ -1885,6 +2036,9 @@ DxbcShader* DrawRenderer::Impl::LoadShader(ShaderMemo* table, ShaderMemo*& last,
 // WriteFanIndices reads them from guest memory.
 bool DrawRenderer::Impl::RequestVertices(const DrawState& s, const DxbcShader& vs,
                                          std::vector<VertexCopy>& out) {
+  // Before the mirror copies the vertices: the HUD's positions are moved in guest memory.
+  if (const HudEdges::Moved m = hud_edges.Apply(s, vs, const_cast<uint8_t*>(membase)); m.length)
+    if (!mirror.RequestRange(m.start, m.length, false, out)) return false;
   return mirror.RequestVertices(s, vs, out);
 }
 

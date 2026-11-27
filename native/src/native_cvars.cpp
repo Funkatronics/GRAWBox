@@ -67,6 +67,10 @@ REXCVAR_DEFINE_BOOL(graw_native_haze_tuning, false, "GRAW native",
                     "F8 goes through the variants of the fixed haze");
 REXCVAR_DEFINE_INT32(graw_native_ao, 0, "GRAW native",
                      "Ambient occlusion, its strength in percent (0: none)");
+REXCVAR_DEFINE_STRING(graw_native_hud_layout, "", "GRAW native",
+                      "With a wider --graw_native_aspect: edges puts the HUD's elements at the "
+                      "edges of the wide picture, at their own shape (anything else leaves it to "
+                      "the game hook: centered or stretched)");
 REXCVAR_DEFINE_DOUBLE(graw_native_aspect, 0.0, "GRAW native",
                       "Width over height the picture is shown at (0: the image's own); a wider one "
                       "stretches it across, for a game drawing that aspect into 1280x720");

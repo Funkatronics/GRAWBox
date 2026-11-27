@@ -186,6 +186,7 @@ const char* Option(const char* name) {
   if (n == "native_primary") return "true";
   if (n == "d3d12_present_vsync") return Settings().vsync.Get() ? "true" : "false";
   if (n == "native_pipeline_wait") return Settings().shader_wait.Get() ? "true" : "false";
+  if (n == "native_hud_layout") return (values[n] = Settings().hud_layout.Get()).c_str();
   if (n == "native_prepare_shaders") return Settings().prepare_shaders.Get() ? "true" : "false";
   // The games' compiled shaders, in the player's game folder (the file name's case differs
   // between the games).

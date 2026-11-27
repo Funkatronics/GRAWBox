@@ -42,9 +42,10 @@ class NativeSettings : public rex::SettingOwner {
   REX_SETTING(std::string, aspect_ratio, "16:9",
               "Shape of the picture: 16:9 as the games, 21:9, 32:9, or the display's",
               rex::Allowed("16:9", "21:9", "32:9", "display"), rex::kRestart);
-  REX_SETTING(std::string, hud_layout, "centered",
-              "Menus and HUD on a wider picture: centered (16:9 in the middle) or stretched across",
-              rex::Allowed("centered", "stretched"), rex::kRestart);
+  REX_SETTING(std::string, hud_layout, "edges",
+              "HUD on a wider picture: edges (each element at the nearest edge, at its own shape; "
+              "menus stay 16:9 in the middle), centered (all 16:9 in the middle) or stretched across",
+              rex::Allowed("edges", "centered", "stretched"), rex::kRestart);
   REX_SETTING(bool, vsync, true, "Wait for the display when the native renderer presents",
               rex::kRestart);
   REX_SETTING(bool, prepare_shaders, true,
