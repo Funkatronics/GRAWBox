@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-11-26. "WARP" is the software GPU used for automated runs; "tester" is a person on a real GPU.
+Updated 2026-11-27. "WARP" is the software GPU used for automated runs; "tester" is a person on a real GPU.
 
 ## Where it stands
 
@@ -18,12 +18,19 @@ Updated 2026-11-26. "WARP" is the software GPU used for automated runs; "tester"
 - **Shader stutter** (#1): hitch lines in the log name their cause; "Wait for new shaders" can be turned off (tester:
   much smoother, brief pop-in). Recipes (`tools/make_recipes.ps1`, `grawbox-recipes.bin` beside the program) plus the
   games' own shaders from `NewYetiShadersX360.sdf` warm pixel stages before play; on a real GPU the fresh-cache shader
-  waits went from 116 ms to 16 ms. Next: rebuild the drawn vertex shaders from the .sdf. They differ from the disc copies
-  only in vertex fetch instructions (runs of three dwords: fetch register, format/stride, offset), patched for the vertex
-  layout; a recipe can carry those dwords and the disc shader's hash, as COGBox does for Gears.
+  waits went from 116 ms to 16 ms. Drawn shaders patched from disc ones are rebuilt from the .sdf too: the recipe keeps
+  the disc entry and XOR deltas of the patched dwords, checked against the drawn hash. From an hour's soak of each game
+  (WARP): GRAW 1 501 recipes, 98 of 104 vertex and 142 of 287 pixel shaders as patches; GRAW 2 566 recipes, 168 of 180
+  vertex and 139 of 312 pixel. The rest matched no disc shader and are still built when first drawn.
+  Whether recipe files ship in releases is the owner's call; `tools/release.ps1` takes `private/recipes/<game>.bin`.
 - **Long stalls** (#34): the game thread waiting for other game threads (WaitForMultipleObjects in what looks like the
   main loop, `sub_822451F8` in GRAW 1). The stall sampler logs where the game thread was and which other threads were
   busy; the next playtest should say what the main thread waits for.
+- **Review backlog** closed: launcher save times read every 2 s and a Classic keys button (#26, #28); key caps
+  redrawn when a prompt sheet streams in (#23); SDL pads switch prompts back to buttons (#24); pointer hiding only
+  on the game's window (#25); the present fits 16:9 again (#27); each wheel notch one timed press (#29).
+- GRAW 1 prompts (#12): the X, Y, trigger and BACK sheets don't load in the first 650 s of training, so they weren't
+  found yet. `GRAWBOX_NATIVE_PROMPT_DUMP=<folder>` dumps the small textures to look for them.
 
 ## Open
 
