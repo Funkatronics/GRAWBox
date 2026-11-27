@@ -877,6 +877,7 @@ void NativeRenderer::ExecuteSwap(const SwapCall& swap) {
   if (!queue_)
     stats_.hook_ns = stats_.draw_ns + stats_.clear_ns + stats_.resolve_ns + stats_.swap_ns;
   WriteCsvRow(stats_, t1 - frame_start_ns_);
+  LogHitch(stats_, t1 - frame_start_ns_);
   AddToStatsLog(stats_, t1 - frame_start_ns_);
   ResetFrameCounters();
   frame_start_ns_ = t1;
@@ -1033,6 +1034,49 @@ void NativeRenderer::WriteCsvRow(const FrameStats& s, uint64_t frame_ns) {
   if (c.luma) AppendCsvLumaColumns(false, &c.line);
   c.line += '\n';
   c.file->Append(c.line);
+}
+
+void NativeRenderer::LogHitch(const FrameStats& s, uint64_t frame_ns) {
+  const TextureStats& ts = backend_->texture_stats();
+  const uint64_t tex_uploads = ts.uploads - hitch_tex_uploads_;
+  const uint64_t tex_bytes = ts.upload_bytes - hitch_tex_bytes_;
+  hitch_tex_uploads_ = ts.uploads;
+  hitch_tex_bytes_ = ts.upload_bytes;
+  if (!frame_ns) return;
+  if (!typical_frame_ns_) {
+    // The first frame includes start-up; seeding with it would hide hitches for hundreds of frames.
+    typical_frame_ns_ = std::min<uint64_t>(frame_ns, 33333333);
+    return;
+  }
+  // As GpuTimer::IsSpike: 1.75x the running mean and at least 5 ms more.
+  const bool hitch = frame_ns > typical_frame_ns_ * 7 / 4 && frame_ns - typical_frame_ns_ > 5000000;
+  const uint64_t typical = typical_frame_ns_;
+  typical_frame_ns_ =
+      typical_frame_ns_ - typical_frame_ns_ / 32 + std::min(frame_ns, typical_frame_ns_ * 2) / 32;
+  if (!hitch) return;
+  // At most 20 lines a minute (loading screens hitch on every frame).
+  const uint64_t now = NowNs();
+  if (now - hitch_window_ns_ > 60'000'000'000ull) {
+    hitch_window_ns_ = now;
+    hitches_in_window_ = 0;
+  }
+  if (++hitches_in_window_ > 20) return;
+  const DrawStats& ds = backend_->draw_stats();
+  // With asynchronous pipelines a new one only queues a job; the frame pays when it waits for it,
+  // or (compiling on the draw thread) when its draws take most of the frame.
+  const bool shaders =
+      ds.pso_wait_us > 1000 || (ds.pso_created && s.draw_ns > frame_ns / 2);
+  const char* cause = shaders                                  ? "shaders"
+                      : tex_bytes > (4u << 20)               ? "textures"
+                      : s.hook_wait_ns > frame_ns / 2         ? "renderer or GPU busy"
+                                                             : "other";
+  REXLOG_INFO(
+      "GRAW native hitch: frame {} {:.1f} ms (typical {:.1f}), likely {}: pipelines created {}, "
+      "waited {:.1f} ms, draws skipped {}; textures uploaded {} ({:.1f} MB); guest uploads "
+      "{:.1f} MB; game thread waited {:.1f} ms; present {:.1f} ms",
+      frame_index_ - 1, frame_ns / 1e6, typical / 1e6, cause, ds.pso_created,
+      ds.pso_wait_us / 1000.0, ds.pso_pending, tex_uploads, tex_bytes / 1048576.0,
+      ds.upload_bytes / 1048576.0, s.hook_wait_ns / 1e6, s.swap_present_ns / 1e6);
 }
 
 void NativeRenderer::AddToStatsLog(const FrameStats& s, uint64_t frame_ns) {

@@ -40,7 +40,11 @@ $scripts = @(
     @('CAPTURE-F12', 'native', 3, '', 'set GRAWBOX_NATIVE_CAPTURE_DIR=%~dp0captures& set GRAWBOX_NATIVE_CAPTURE_XENOS=false& set GRAWBOX_NATIVE_CAPTURE_BURST=6& set GRAWBOX_NATIVE_MARK_AUDIT=3& if not exist captures mkdir captures'),
     @('NATIVE-4K-ORIGINAL-HAZE', 'native', 3, '--native.haze=original'),
     @('EMULATED-THEN-F9', 'emulated', 3, ''),
-    @('NATIVE-4K-KEYBOARD', 'native', 3, '--hid.drivers=keyboard,sdl3 --hid.shared_pads=true')
+    @('NATIVE-4K-KEYBOARD', 'native', 3, '--hid.drivers=keyboard,sdl3 --hid.shared_pads=true'),
+    # Stutter: a row per frame (frame time, pipelines created and waited for, uploads) in
+    # frames.csv beside native.log (frames.1.csv and so on in later runs), to tell shader compiles
+    # from other hitches.
+    @('NATIVE-4K-STUTTER-LOG', 'native', 3, '', 'set GRAWBOX_NATIVE_CSV=%~dp0frames.csv')
 )
 # Field of view and aspect ratio (games/*/src/camera.cpp).
 $scripts += @(

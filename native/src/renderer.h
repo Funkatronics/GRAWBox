@@ -136,6 +136,9 @@ class NativeRenderer {
   void AppendCsvProfileColumns(bool header, std::string* line);
   void AppendCsvLumaColumns(bool header, std::string* line);
   void AddToStatsLog(const FrameStats& s, uint64_t frame_ns);
+  // A frame well over the typical frame time (a hitch the player feels): one log line with what
+  // the frame did, so a log tells shader compiles from texture uploads and other causes.
+  void LogHitch(const FrameStats& s, uint64_t frame_ns);
   void ResetFrameCounters();
   // Starts a frame's backend state (Backend::BeginFrame) at its first On* call.
   void BeginFrame() {
@@ -188,6 +191,9 @@ class NativeRenderer {
   bool frame_begun_ = false;
   uint64_t frame_index_ = 0;
   uint64_t frame_start_ns_ = 0;
+  uint64_t typical_frame_ns_ = 0;  // running mean, hitches clamped (LogHitch)
+  uint64_t hitch_tex_uploads_ = 0, hitch_tex_bytes_ = 0, hitch_window_ns_ = 0;
+  uint32_t hitches_in_window_ = 0;
   FrameStats stats_;
   ThreadUsage guest_usage_begin_;   // when the guest thread began the frame
   ThreadUsage render_usage_begin_;  // at the recording thread's last Swap
