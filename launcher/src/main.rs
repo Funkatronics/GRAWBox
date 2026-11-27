@@ -38,6 +38,9 @@ struct Capture {
 
 struct App {
     settings: Settings,
+    /// Each game's last save time and when it was read: the Saves tab walks the save folders at most
+    /// every 2 s (and after an import or export), not every frame.
+    last_saved: Vec<Option<(std::time::Instant, Option<std::time::SystemTime>)>>,
     saved: Settings,
     tab: Tab,
     running: Option<(usize, Child)>,
@@ -55,6 +58,7 @@ impl App {
         App {
             saved: settings.clone(),
             settings,
+            last_saved: vec![None; GAMES.len()],
             // GRAWBOX_LAUNCHER_TAB (play, graphics, controls, files, saves): the first tab, for screenshots.
             tab: match std::env::var("GRAWBOX_LAUNCHER_TAB").as_deref() {
                 Ok("graphics") => Tab::Graphics,
@@ -330,6 +334,9 @@ impl App {
                         if ui.button("Defaults").clicked() {
                             s.keys = settings::default_keys();
                         }
+                        if ui.button("Classic").on_hover_text("The first key scheme, the same keys in both games").clicked() {
+                            s.keys = settings::classic_keys();
+                        }
                     });
                 });
                 ui.label(RichText::new("Click, then press a key or mouse button.").weak());
@@ -363,7 +370,16 @@ impl App {
             card(ui, |ui| {
                 ui.label(RichText::new(g.name).strong());
                 let user = g.user_dir();
-                match saves::last_saved(&user, g.title_id) {
+                let fresh = self.last_saved[i].filter(|(at, _)| at.elapsed() < Duration::from_secs(2));
+                let saved = match fresh {
+                    Some((_, t)) => t,
+                    None => {
+                        let t = saves::last_saved(&user, g.title_id);
+                        self.last_saved[i] = Some((std::time::Instant::now(), t));
+                        t
+                    }
+                };
+                match saved {
                     Some(t) => ui.label(format!("Saved {} (UTC)", saves::stamp(t))),
                     None => ui.label("No save yet"),
                 };
@@ -375,6 +391,7 @@ impl App {
                     }
                     if ui.button("Export").clicked() {
                         if let Some(into) = rfd::FileDialog::new().set_title("Export to").pick_folder() {
+                            self.last_saved[i] = None;
                             self.message = Some(match saves::export(&user, g.title_id, g.name, &into) {
                                 Ok(p) => (true, format!("Exported to {}", p.display())),
                                 Err(e) => (false, e),
@@ -383,6 +400,7 @@ impl App {
                     }
                     if ui.add_enabled(!running, egui::Button::new("Import")).on_disabled_hover_text("Close the game first.").clicked() {
                         if let Some(from) = rfd::FileDialog::new().set_title("An exported save").pick_folder() {
+                            self.last_saved[i] = None;
                             self.message = Some(match saves::import(&user, g.title_id, g.name, &from, &g.backup_dir()) {
                                 Ok(Some(b)) => (true, format!("Imported. The previous saves are in {}", b.display())),
                                 Ok(None) => (true, "Imported.".into()),

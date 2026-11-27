@@ -1,7 +1,8 @@
 # Keys for --hid.drivers=keyboard. Uncomment and change; names: A-Z 0-9 F1-F24 SPACE ENTER ESC TAB
 # BACKSPACE LSHIFT RSHIFT LCTRL RCTRL LALT RALT CAPS UP DOWN LEFT RIGHT INSERT DELETE HOME END PAGEUP
 # PAGEDOWN WHEELUP WHEELDOWN MOUSE1 (left) MOUSE2 (right) MOUSE3 (middle) MOUSE4 MOUSE5. Several keys
-# may share a control. grawbox-keys-classic.txt is the first scheme: copy it over this file to use it.
+# may share a control. grawbox-keys-classic.txt is the first scheme: in the launcher, Controls >
+# Classic; without it, copy that file over this one.
 #
 # mouse_sensitivity = 1.0
 # mouse_deadzone = 0.24

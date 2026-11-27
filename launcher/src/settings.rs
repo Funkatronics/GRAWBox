@@ -89,6 +89,23 @@ pub fn default_keys() -> BTreeMap<String, String> {
     CONTROLS.iter().map(|(n, _, k)| (n.to_string(), k.to_string())).collect()
 }
 
+/// The first key scheme (input/grawbox-keys-classic.txt), for the Controls tab's Classic button: every
+/// control it names, the rest as the defaults. The launcher writes grawbox-keys.txt from the settings
+/// at every start, so copying the classic file over it would not last.
+pub fn classic_keys() -> BTreeMap<String, String> {
+    let mut keys = default_keys();
+    for line in include_str!("../../input/grawbox-keys-classic.txt").lines() {
+        let line = line.split('#').next().unwrap_or("");
+        if let Some((name, value)) = line.split_once('=') {
+            let name = name.trim();
+            if keys.contains_key(name) {
+                keys.insert(name.to_string(), value.trim().to_string());
+            }
+        }
+    }
+    keys
+}
+
 pub fn path() -> std::path::PathBuf {
     crate::game::home().join("settings.toml")
 }
@@ -224,6 +241,13 @@ mod tests {
         s.keys.insert("a".into(), "R".into());
         let text = toml::to_string_pretty(&s).unwrap();
         assert!(Settings::parse(&text).unwrap() == s);
+    }
+
+    #[test]
+    fn classic_scheme() {
+        let classic = classic_keys();
+        assert_eq!(classic.len(), default_keys().len());
+        assert_ne!(classic, default_keys());
     }
 
     #[test]
