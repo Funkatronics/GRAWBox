@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <cctype>
+#include <cwctype>
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -129,24 +130,39 @@ const char* Option(const char* name) {
   if (n == "native_pipeline_wait") return Settings().shader_wait.Get() ? "true" : "false";
   // The games' compiled shaders, in the player's game folder (the file name's case differs
   // between the games).
+  // Both paths are passed in UTF-8 (the renderer reads them so), and any path error leaves the
+  // option unset rather than reaching the renderer.
+  auto utf8 = [](const std::filesystem::path& p) {
+    const std::u8string s = p.u8string();
+    return std::string(s.begin(), s.end());
+  };
   if (n == "native_shader_file") {
-    auto root = REX_SETTINGS().Find("title.game_root");
-    if (!root) return nullptr;
-    std::error_code ec;
-    for (const auto& e : std::filesystem::directory_iterator((*root)->GetText(), ec)) {
-      std::string name = e.path().filename().string();
-      for (char& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
-      if (name == "newyetishadersx360.sdf") return (values[n] = e.path().string()).c_str();
+    try {
+      auto root = REX_SETTINGS().Find("title.game_root");
+      if (!root) return nullptr;
+      std::error_code ec;
+      for (std::filesystem::directory_iterator it((*root)->GetText(), ec), end; !ec && it != end;
+           it.increment(ec)) {
+        std::wstring name = it->path().filename().wstring();
+        for (wchar_t& c : name) c = wchar_t(std::towlower(c));
+        if (name == L"newyetishadersx360.sdf") return (values[n] = utf8(it->path())).c_str();
+      }
+    } catch (const std::exception&) {
     }
     return nullptr;
   }
   // Recipes recorded in playtests, shipped beside the program.
   if (n == "native_recipes") {
-    wchar_t exe[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    const std::filesystem::path file = std::filesystem::path(exe).parent_path() / "grawbox-recipes.bin";
-    std::error_code ec;
-    return std::filesystem::is_regular_file(file, ec) ? (values[n] = file.string()).c_str() : nullptr;
+    try {
+      wchar_t exe[MAX_PATH] = {};
+      GetModuleFileNameW(nullptr, exe, MAX_PATH);
+      const std::filesystem::path file =
+          std::filesystem::path(exe).parent_path() / "grawbox-recipes.bin";
+      std::error_code ec;
+      if (std::filesystem::is_regular_file(file, ec)) return (values[n] = utf8(file)).c_str();
+    } catch (const std::exception&) {
+    }
+    return nullptr;
   }
   if (n == "native_haze") return (values[n] = Settings().haze.Get()).c_str();
   if (n == "native_anisotropy")

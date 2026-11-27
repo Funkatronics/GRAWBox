@@ -34,13 +34,14 @@ bool DiscShaders::Load(const std::filesystem::path& file) {
     pos = at + size;
     const uint8_t* c = &data[at];
     const uint32_t magic = size >= 28 ? Be32(c) : 0;
-    uint32_t offset = size >= 28 ? Be32(c + 4) : 0, bytes = size >= 28 ? Be32(c + 8) : 0;
+    uint64_t offset = size >= 28 ? Be32(c + 4) : 0;
+    uint32_t bytes = size >= 28 ? Be32(c + 8) : 0;
     if ((magic & ~1u) == 0x102A1100u) {
       // Version 0x11 (GRAW 2): field 6 points to a record of the code's offset past field 1's
       // and its size, as COGBox reads Gears' containers.
       const uint32_t record = Be32(c + 24);
       if (record <= size - 8) {
-        offset += Be32(c + record);
+        offset += Be32(c + record);  // 64-bit: a corrupt sum must not wrap past the checks
         bytes = Be32(c + record + 4);
       } else {
         bytes = 0;

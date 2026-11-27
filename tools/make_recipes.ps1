@@ -9,6 +9,8 @@ param(
     [Parameter(Mandatory)][string[]]$Stores
 )
 $ErrorActionPreference = 'Stop'
+# Relative to this shell's location, not the .NET working directory.
+$Out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Out)
 $header = $null
 $seen = [System.Collections.Generic.HashSet[string]]::new()
 $records = [System.IO.MemoryStream]::new()
@@ -38,7 +40,10 @@ foreach ($store in $Stores) {
     }
 }
 $file = [IO.File]::Create($Out)
-$file.Write([byte[]]$header, 0, 16)
-$records.WriteTo($file)
-$file.Close()
+try {
+    $file.Write([byte[]]$header, 0, 16)
+    $records.WriteTo($file)
+} finally {
+    $file.Close()
+}
 "make_recipes: $count recipes from $($Stores.Count) store(s) in $Out"

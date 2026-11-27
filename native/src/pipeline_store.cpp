@@ -174,7 +174,8 @@ size_t PipelineStore::AddRecipes(const std::filesystem::path& file, uint32_t key
           !take(&p.ps_mod, 8) || !take(p.key.data(), key_size_))
         break;
       // The same hash as Open's, so a recipe already in this player's store is not added twice.
-      // Not marked written: the player's own store still records it when a draw creates it.
+      // Not marked written, though a recipe that prewarm builds is not recorded by draws either
+      // (GetPipeline records only pipelines it creates): the recipe file keeps providing it.
       const uint64_t record = XXH3_64bits(data.data() + start + 4, pos - start - 4);
       if (!pipelines_written_.count(record) && recipes_seen_.insert(record).second) {
         loaded_pipelines_.push_back(std::move(p));
