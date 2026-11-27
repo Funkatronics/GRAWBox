@@ -16,6 +16,7 @@
 #include "log.h"
 #include "pipeline_library.h"
 #include "pipeline_store.h"
+#include "disc_shaders.h"
 #include "post.h"
 #include "profile.h"
 #include "render_targets.h"
@@ -67,6 +68,8 @@ REXCVAR_DECLARE(bool, graw_native_async_pipelines);
 REXCVAR_DECLARE(int32_t, graw_native_pipeline_threads);
 REXCVAR_DECLARE(bool, graw_native_pipeline_wait);
 REXCVAR_DECLARE(bool, graw_native_pipeline_cache);
+REXCVAR_DECLARE(std::string, graw_native_shader_file);
+REXCVAR_DECLARE(std::string, graw_native_recipes);
 REXCVAR_DECLARE(std::string, graw_native_watch_trace);
 REXCVAR_DECLARE(bool, graw_native_coherency_check);
 REXCVAR_DECLARE(bool, graw_native_implicit_gradients);
@@ -497,6 +500,10 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   bool generic_pipelines = false;        // --graw_native_generic_pipelines (with worker threads)
   std::vector<Pipeline*> frame_pending;  // pipelines of the frame's skipped draws, once each
   PipelineStore store;
+  // The games' own compiled shaders (--graw_native_shader_file): recipes' shaders not in `store`.
+  DiscShaders disc;
+  uint32_t prewarm_warm_only = 0;  // recipes whose pixel stage was warmed with a stand-in VS
+  uint32_t prewarm_no_shader = 0;  // recipes whose shaders are in neither the store nor the files
   // What made the pipelines created while running new (logged, kNewPipelineLog lines): a
   // shader pair or a render state no pipeline had before, bool or texture-sign variants.
   // Counted only while those lines are logged: nothing reads them afterwards.
@@ -972,6 +979,10 @@ bool DrawRenderer::Impl::Initialize() {
       // Shaders translated the other way can't share the cache's pipelines.
       dir /= rex::graphics::g_dxbc_implicit_gradients ? "graw-native" : "graw-native-gradients";
       store.Open(dir, sizeof(PipelineKey), kPipelineKeyVersion);
+      if (const std::string recipes = REXCVAR_GET(graw_native_recipes); !recipes.empty())
+        store.AddRecipes(std::filesystem::path(recipes), kPipelineKeyVersion);
+      if (const std::string sdf = REXCVAR_GET(graw_native_shader_file); !sdf.empty())
+        disc.Load(std::filesystem::path(sdf));
       // The store keeps guest shaders and keys, translated again at start-up, so every scale
       // warms up the pipelines any run has seen; the compiled pipelines differ per scale.
       const uint32_t scale = DrawResolutionScale();
@@ -1612,18 +1623,32 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
   const std::vector<PipelineStore::Pipeline>& list = store.loaded_pipelines();
   if (prewarm_next >= list.size()) return;
   const auto t0 = std::chrono::steady_clock::now();
+  // A shader from this player's store, else from the game's files (recipes from playtests).
   auto load = [&](uint64_t hash, xenos::ShaderType type) -> DxbcShader* {
-    const PipelineStore::Shader* s = store.loaded_shader(hash);
-    if (!s || s->type != uint32_t(type) || s->ucode.empty()) return nullptr;
-    return shaders.Load(type, s->ucode.data(), uint32_t(s->ucode.size()));
+    if (const PipelineStore::Shader* s = store.loaded_shader(hash);
+        s && s->type == uint32_t(type) && !s->ucode.empty())
+      return shaders.Load(type, s->ucode.data(), uint32_t(s->ucode.size()));
+    const DiscShaders::Shader* d = disc.Find(hash);
+    if (!d || d->pixel != (type == xenos::ShaderType::kPixel)) return nullptr;
+    return shaders.Load(type, d->ucode.data(), uint32_t(d->ucode.size()));
   };
   do {
     const PipelineStore::Pipeline& sp = list[prewarm_next++];
     DxbcShader* vs = load(sp.vs_hash, xenos::ShaderType::kVertex);
     DxbcShader* ps = sp.ps_hash ? load(sp.ps_hash, xenos::ShaderType::kPixel) : nullptr;
+    // A drawn vertex shader is patched for its vertex layout, so it is never in the game's files.
+    // With the pixel shader at hand, any vertex shader translated with the recipe's modification
+    // (which alone decides what it passes to the pixel shader) builds a pipeline that is never
+    // drawn but has the driver compile the pixel stage the real one will use.
+    if (!vs && ps && disc.stand_in_vertex()) {
+      const DiscShaders::Shader& s = *disc.stand_in_vertex();
+      vs = shaders.Load(xenos::ShaderType::kVertex, s.ucode.data(), uint32_t(s.ucode.size()));
+      ++prewarm_warm_only;
+    }
     DxbcShader::Translation* vst = vs ? shaders.Translate(*vs, sp.vs_mod) : nullptr;
     DxbcShader::Translation* pst = ps ? shaders.Translate(*ps, sp.ps_mod) : nullptr;
     if (!vst || (sp.ps_hash && !pst) || sp.key.size() != sizeof(PipelineKey)) {
+      if (!vs || (sp.ps_hash && !ps)) ++prewarm_no_shader;
       ++prewarm_failed;
       continue;
     }
@@ -1653,8 +1678,10 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
   ++prewarm_frames;
   if (prewarm_next < list.size()) return;
   REXLOG_INFO(
-      "GRAW native pipelines: prewarm queued {} pipelines ({} failed) in {:.1f} ms over {} frames",
-      list.size() - prewarm_failed.load(), prewarm_failed.load(), prewarm_ms, prewarm_frames);
+      "GRAW native pipelines: prewarm queued {} pipelines ({} only to warm a pixel shader from the "
+      "game's files, {} failed, {} of them for want of a shader) in {:.1f} ms over {} frames",
+      list.size() - prewarm_failed.load(), prewarm_warm_only, prewarm_failed.load(), prewarm_no_shader,
+      prewarm_ms, prewarm_frames);
   // The last entries may have been skipped or failed after the workers finished the others.
   std::lock_guard<std::mutex> lock(pso_mutex);
   prewarm_queued = true;

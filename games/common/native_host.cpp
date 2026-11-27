@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <cctype>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <string>
@@ -126,6 +127,27 @@ const char* Option(const char* name) {
   if (n == "native_primary") return "true";
   if (n == "d3d12_present_vsync") return Settings().vsync.Get() ? "true" : "false";
   if (n == "native_pipeline_wait") return Settings().shader_wait.Get() ? "true" : "false";
+  // The games' compiled shaders, in the player's game folder (the file name's case differs
+  // between the games).
+  if (n == "native_shader_file") {
+    auto root = REX_SETTINGS().Find("title.game_root");
+    if (!root) return nullptr;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator((*root)->GetText(), ec)) {
+      std::string name = e.path().filename().string();
+      for (char& c : name) c = char(std::tolower(static_cast<unsigned char>(c)));
+      if (name == "newyetishadersx360.sdf") return (values[n] = e.path().string()).c_str();
+    }
+    return nullptr;
+  }
+  // Recipes recorded in playtests, shipped beside the program.
+  if (n == "native_recipes") {
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const std::filesystem::path file = std::filesystem::path(exe).parent_path() / "grawbox-recipes.bin";
+    std::error_code ec;
+    return std::filesystem::is_regular_file(file, ec) ? (values[n] = file.string()).c_str() : nullptr;
+  }
   if (n == "native_haze") return (values[n] = Settings().haze.Get()).c_str();
   if (n == "native_anisotropy")
     return (values[n] = std::to_string(Settings().anisotropy.Get())).c_str();

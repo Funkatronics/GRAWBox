@@ -139,6 +139,55 @@ void PipelineStore::Open(const std::filesystem::path& dir, uint32_t key_size,
               loaded_pipelines_.size(), loaded_shaders_.size(), path.string());
 }
 
+size_t PipelineStore::AddRecipes(const std::filesystem::path& file, uint32_t key_version) {
+  if (!key_size_) return 0;
+  const std::vector<uint8_t> data = ReadWholeFile(file);
+  size_t pos = 0, added = 0;
+  auto take = [&](void* out, size_t n) {
+    if (data.size() - pos < n) return false;
+    std::memcpy(out, data.data() + pos, n);
+    pos += n;
+    return true;
+  };
+  Header h;
+  if (!take(&h, sizeof(h)) || std::memcmp(h.magic, kMagic, 4) || h.format != kFormat ||
+      h.key_size != key_size_ || h.key_version != key_version) {
+    if (!data.empty())
+      REXLOG_WARN("GRAW native pipelines: {} is not a recipe file for this build", file.string());
+    return 0;
+  }
+  for (;;) {
+    const size_t start = pos;
+    uint32_t tag;
+    if (!take(&tag, 4)) break;
+    if (tag == kShaderTag) {
+      uint32_t type, dwords;
+      uint64_t hash;
+      if (!take(&type, 4) || !take(&hash, 8) || !take(&dwords, 4) ||
+          data.size() - pos < size_t(dwords) * 4)
+        break;
+      pos += size_t(dwords) * 4;
+    } else if (tag == kPipelineTag) {
+      Pipeline p;
+      p.key.resize(key_size_);
+      if (!take(&p.vs_hash, 8) || !take(&p.vs_mod, 8) || !take(&p.ps_hash, 8) ||
+          !take(&p.ps_mod, 8) || !take(p.key.data(), key_size_))
+        break;
+      // The same hash as Open's, so a recipe already in this player's store is not added twice.
+      // Not marked written: the player's own store still records it when a draw creates it.
+      const uint64_t record = XXH3_64bits(data.data() + start + 4, pos - start - 4);
+      if (!pipelines_written_.count(record) && recipes_seen_.insert(record).second) {
+        loaded_pipelines_.push_back(std::move(p));
+        ++added;
+      }
+    } else {
+      break;
+    }
+  }
+  REXLOG_INFO("GRAW native pipelines: {} recipes added from {}", added, file.string());
+  return added;
+}
+
 void PipelineStore::RecordShader(uint32_t type, uint64_t hash, const uint32_t* host_ucode,
                                  size_t dwords) {
   if (!file_ || !shaders_written_.insert(hash).second) return;

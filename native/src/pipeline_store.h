@@ -57,6 +57,11 @@ class PipelineStore {
   // Once per frame: makes the records appended since the last call durable.
   void Flush();
 
+  // Adds the pipeline records of a recipe file (the same format, read only; its shader records
+  // are ignored: the shaders come from this run's store or the game's files) that are not in
+  // loaded_pipelines() yet. Returns how many were added. Call after Open.
+  size_t AddRecipes(const std::filesystem::path& file, uint32_t key_version);
+
   static constexpr uint32_t kMaxKeySize = 256;
 
  private:
@@ -66,6 +71,7 @@ class PipelineStore {
   std::unordered_map<uint64_t, Shader> loaded_shaders_;
   std::vector<Pipeline> loaded_pipelines_;
   std::unordered_set<uint64_t> shaders_written_, pipelines_written_;
+  std::unordered_set<uint64_t> recipes_seen_;  // AddRecipes' records, against duplicates
 };
 
 }  // namespace graw::native
