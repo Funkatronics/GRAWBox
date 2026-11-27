@@ -227,8 +227,11 @@ const char* Option(const char* name) {
                         (automatic ? "@auto=1;" : ""))
         .c_str();
   }
+  // Only when wider than 16:9: unset, the present fits each image at its own shape.
   if (n == "native_aspect")
-    return (values[n] = std::to_string(AspectRatio())).c_str();
+    return AspectRatio() > 16.0 / 9.0 + 0.01
+               ? (values[n] = std::to_string(AspectRatio())).c_str()
+               : nullptr;
   if (n == "native_resolution_scale")
     return (values[n] = std::to_string(Settings().resolution_scale.Get())).c_str();
   return nullptr;

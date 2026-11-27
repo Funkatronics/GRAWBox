@@ -1,5 +1,7 @@
 #include "prompts.h"
 
+#include <type_traits>
+#include <unordered_map>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
@@ -397,6 +399,70 @@ bool PadUsed(bool* changed) {
   return used;
 }
 
+// The same for the controllers SDL reads (the games' sdl3 input driver: DualSense, Switch and other
+// pads XInput doesn't see). Only if that driver already loaded SDL3 (nothing is loaded here); SDL's
+// gamepad getters take its joystick lock, so they can be read from this thread.
+bool SdlPadUsed(bool* changed) {
+  using Id = uint32_t;
+  struct Sdl {
+    Id* (*get_gamepads)(int*) = nullptr;
+    void* (*from_id)(Id) = nullptr;
+    bool (*button)(void*, int) = nullptr;
+    int16_t (*axis)(void*, int) = nullptr;
+    void (*free)(void*) = nullptr;
+  };
+  static const Sdl sdl = [] {
+    Sdl s;
+    if (HMODULE m = GetModuleHandleW(L"SDL3.dll")) {
+      auto get = [m](auto& fn, const char* name) {
+        fn = reinterpret_cast<std::remove_reference_t<decltype(fn)>>(GetProcAddress(m, name));
+      };
+      get(s.get_gamepads, "SDL_GetGamepads");
+      get(s.from_id, "SDL_GetGamepadFromID");
+      get(s.button, "SDL_GetGamepadButton");
+      get(s.axis, "SDL_GetGamepadAxis");
+      get(s.free, "SDL_free");
+    }
+    return s;
+  }();
+  if (!sdl.get_gamepads || !sdl.from_id || !sdl.button || !sdl.axis || !sdl.free) return false;
+  struct State {
+    uint32_t buttons = 0;  // the 15 standard buttons (SDL_GAMEPAD_BUTTON_SOUTH ... DPAD_RIGHT)
+    int16_t axes[6] = {};  // left x/y, right x/y, left/right trigger
+    bool operator==(const State&) const = default;
+  };
+  static std::unordered_map<Id, State> last;
+  int count = 0;
+  Id* ids = sdl.get_gamepads(&count);
+  if (!ids) return false;
+  bool used = false;
+  for (int i = 0; i < count; ++i) {
+    void* pad = sdl.from_id(ids[i]);  // only pads the driver opened
+    if (!pad) continue;
+    State s;
+    for (int b = 0; b < 15; ++b) s.buttons |= uint32_t(sdl.button(pad, b)) << b;
+    for (int a = 0; a < 6; ++a) s.axes[a] = sdl.axis(pad, a);
+    auto it = last.find(ids[i]);
+    if (it == last.end()) {
+      last.emplace(ids[i], s);
+      continue;
+    }
+    const State& o = it->second;
+    if (s == o) continue;
+    *changed = true;
+    auto moved = [](int a, int b, int by) { return std::abs(a - b) > by; };
+    auto off = [](int16_t v) { return v > 12000 || v < -12000; };
+    bool stick = false;
+    for (int a = 0; a < 4; ++a) stick |= off(s.axes[a]) && moved(s.axes[a], o.axes[a], 4000);
+    if (s.buttons != o.buttons || moved(s.axes[4], o.axes[4], 5000) ||
+        moved(s.axes[5], o.axes[5], 5000) || stick)
+      used = true;
+    it->second = s;
+  }
+  sdl.free(ids);
+  return used;
+}
+
 // A key or mouse button pressed since the last call.
 bool KeyPressed() {
   static bool down[256] = {};
@@ -430,8 +496,9 @@ bool PollPromptDevice() {
   static DWORD last_input = 0;
   static ULONGLONG pad_at = 0;
   const ULONGLONG now = GetTickCount64();
-  bool pad_changed = false;
-  const bool pad = PadUsed(&pad_changed);
+  bool pad_changed = false, sdl_changed = false;
+  const bool pad = PadUsed(&pad_changed) | SdlPadUsed(&sdl_changed);
+  pad_changed |= sdl_changed;
   if (pad_changed) pad_at = now;
   LASTINPUTINFO info = {sizeof(info)};
   const bool any = GetLastInputInfo(&info) && last_input && info.dwTime != last_input;
