@@ -117,6 +117,9 @@ class DrawRenderer {
   // At Swap, before EndFrame: the frame skipped draws in a burst of new pipelines (a scene's
   // first frame, before its draws began waiting for them), so it is not worth showing.
   bool FrameIncomplete() const;
+  // At Swap, after EndFrame, until it returns false: the up-front shader preparation (the game
+  // waits meanwhile). `progress` is 0 to 1 for the progress screen.
+  bool PrepareShaders(float* progress);
   // Per frame, with the fence values of D3D12Backend (once per Swap, after EndFrame).
   void EndFrame(uint64_t completed_fence);
 

@@ -17,6 +17,8 @@
 #include <rex/logging.h>
 #include <rex/system/kernel_state.h>
 
+#include <algorithm>
+
 namespace graw::native {
 
 D3D12Backend::D3D12Backend() = default;
@@ -201,7 +203,48 @@ Backend::SwapResult D3D12Backend::Swap(const SwapCall& swap, std::optional<bool>
   r.presents = et.presents;
   r.completed = d.completed_fence();
   r.ok = true;
+  // At the game's first frame: shaders prepared before play (the game waits here), with a
+  // progress bar shown meanwhile.
+  if (preparing_) {
+    float progress = 0;
+    while (draw_->PrepareShaders(&progress)) {
+      if (d.has_swapchain()) {
+        RecordPreparing(progress);
+        if (!d.EndFrame(true)) break;
+      } else {
+        Sleep(15);
+      }
+    }
+    preparing_ = false;
+    r.completed = d.completed_fence();
+  }
   return r;
+}
+
+void D3D12Backend::RecordPreparing(float progress) {
+  D3D12Device& d = *device_;
+  ID3D12GraphicsCommandList* list = d.command_list();
+  ID3D12Resource* back = d.back_buffer();
+  const D3D12_CPU_DESCRIPTOR_HANDLE rtv = d.back_buffer_rtv();
+  D3D12_RESOURCE_BARRIER b =
+      TransitionBarrier(back, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+  list->ResourceBarrier(1, &b);
+  const float dark[4] = {0.02f, 0.02f, 0.02f, 1.0f};
+  const float track[4] = {0.12f, 0.12f, 0.12f, 1.0f};
+  const float fill[4] = {0.75f, 0.75f, 0.75f, 1.0f};
+  list->ClearRenderTargetView(rtv, dark, 0, nullptr);
+  const LONG w = LONG(d.width()), h = LONG(d.height());
+  const LONG bar_w = w * 2 / 5, bar_h = std::max<LONG>(4, h / 120);
+  const LONG x0 = (w - bar_w) / 2, y0 = h * 3 / 4;
+  const D3D12_RECT whole = {x0, y0, x0 + bar_w, y0 + bar_h};
+  list->ClearRenderTargetView(rtv, track, 1, &whole);
+  const LONG filled = LONG(float(bar_w) * std::clamp(progress, 0.0f, 1.0f));
+  if (filled > 0) {
+    const D3D12_RECT done = {x0, y0, x0 + filled, y0 + bar_h};
+    list->ClearRenderTargetView(rtv, fill, 1, &done);
+  }
+  b = TransitionBarrier(back, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+  list->ResourceBarrier(1, &b);
 }
 
 void D3D12Backend::AfterSwap(uint64_t frame_index, uint64_t completed) {

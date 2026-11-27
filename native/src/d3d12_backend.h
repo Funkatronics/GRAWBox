@@ -88,8 +88,12 @@ class D3D12Backend final : public Backend {
   // surface is disconnected before ours is created, and ours released before it is connected
   // again. Returns false when the swapchain cannot be created (logged).
   bool OwnGameWindow(bool own);
+  // The up-front shader preparation's screen: a progress bar on a dark picture, recorded into the
+  // open list (the back buffer PRESENT in and out).
+  void RecordPreparing(float progress);
 
   std::unique_ptr<D3D12Device> device_;
+  bool preparing_ = true;  // DrawRenderer::PrepareShaders not finished yet
   bool window_taken_ = false;  // OwnGameWindow disconnected ReXGlue's presenter from the window
   std::unique_ptr<RenderTargets> rt_;
   std::unique_ptr<Resolver> resolver_;

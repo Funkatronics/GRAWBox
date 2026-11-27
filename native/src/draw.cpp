@@ -67,6 +67,7 @@
 REXCVAR_DECLARE(bool, graw_native_async_pipelines);
 REXCVAR_DECLARE(int32_t, graw_native_pipeline_threads);
 REXCVAR_DECLARE(bool, graw_native_pipeline_wait);
+REXCVAR_DECLARE(bool, graw_native_prepare_shaders);
 REXCVAR_DECLARE(bool, graw_native_pipeline_cache);
 REXCVAR_DECLARE(std::string, graw_native_shader_file);
 REXCVAR_DECLARE(std::string, graw_native_recipes);
@@ -493,6 +494,12 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   std::condition_variable pso_wait_cv;   // wait workers: a frame began waiting
   std::condition_variable pso_ready_cv;  // a job finished (notified under pso_mutex)
   bool pso_waiting = false;              // WaitForPipelines is waiting (under pso_mutex)
+  // PrepareShaders: before play, every worker takes the stored pipelines (under pso_mutex).
+  bool preparing = false;
+  // PrepareShaders' state (the Swap thread): started, done, and when the count last moved.
+  bool prepare_started = false, prepare_done = false;
+  std::chrono::steady_clock::time_point prepare_t0, prepare_moved;
+  uint32_t prepare_last = 0;
   std::deque<PipelineJob> pso_jobs;      // a draw is waiting for these
   std::deque<PipelineJob> prewarm_jobs;  // taken only when pso_jobs is empty
   bool pso_stopping = false;
@@ -804,6 +811,7 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   // Translates and queues the stored pipelines (prewarm), for at most `budget` per call.
   // Per frame: translates and queues stored pipelines from earlier runs for up to ~2 ms.
   void Prewarm(std::chrono::milliseconds budget = std::chrono::milliseconds(2));
+  bool PrepareShaders(float* progress);
 
   std::shared_ptr<CoherencyJob> MakeCoherencyJob();
   static constexpr uint32_t kRegisterBlocks[6] = {0,      0x4000, 0x4400,
@@ -1026,7 +1034,10 @@ void DrawRenderer::Impl::PipelineWorker(bool saves, bool on_wait) {
   auto has_work = [this] { return pso_stopping || !pso_jobs.empty() || !prewarm_jobs.empty(); };
   for (;;) {
     if (on_wait) {
-      pso_wait_cv.wait(lock, [this] { return pso_stopping || (pso_waiting && !pso_jobs.empty()); });
+      pso_wait_cv.wait(lock, [this] {
+        return pso_stopping || (pso_waiting && !pso_jobs.empty()) ||
+               (preparing && !prewarm_jobs.empty());
+      });
     } else if (saves && library.dirty()) {
       // Save once no new pipeline came for 3 s (the burst is over).
       if (!pso_cv.wait_for(lock, std::chrono::seconds(3), has_work)) {
@@ -1722,6 +1733,57 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
   std::lock_guard<std::mutex> lock(pso_mutex);
   prewarm_queued = true;
   LogPrewarmReady();
+}
+
+bool DrawRenderer::Impl::PrepareShaders(float* progress) {
+  // Shaders prepared up front (issue #1): before play, every pipeline from earlier runs and the
+  // recipes is translated and built, with all compile threads, so play starts with them ready.
+  // Later starts load them from the pipeline library. Pipelines a driver is very slow with don't
+  // hold the start: after 10 s without one finishing, the rest finish in the background.
+  if (prepare_done) return false;
+  const size_t total = store.loaded_pipelines().size();
+  const auto now = std::chrono::steady_clock::now();
+  if (!prepare_started) {
+    prepare_started = true;
+    if (!REXCVAR_GET(graw_native_prepare_shaders) || pso_threads.empty() || !total) {
+      prepare_done = true;
+      return false;
+    }
+    prepare_t0 = prepare_moved = now;
+    std::lock_guard<std::mutex> lock(pso_mutex);
+    preparing = true;
+    REXLOG_INFO("GRAW native pipelines: preparing {} shaders before play", total);
+  }
+  // Translating and queueing in slices, so the progress screen keeps moving.
+  Prewarm(std::chrono::milliseconds(15));
+  pso_cv.notify_all();
+  pso_wait_cv.notify_all();
+  uint32_t done;
+  bool all;
+  {
+    std::lock_guard<std::mutex> lock(pso_mutex);
+    done = prewarm_finished + prewarm_failed.load() + prewarm_skipped.load();
+    all = prewarm_queued && done >= total;
+  }
+  if (done != prepare_last) {
+    prepare_last = done;
+    prepare_moved = now;
+  }
+  *progress = float(std::min<size_t>(done, total)) / float(total);
+  const bool stuck = prewarm_next >= total && now - prepare_moved > std::chrono::seconds(10);
+  if (!all && !stuck) return true;
+  {
+    std::lock_guard<std::mutex> lock(pso_mutex);
+    preparing = false;
+  }
+  prepare_done = true;
+  const double s = std::chrono::duration<double>(now - prepare_t0).count();
+  if (all)
+    REXLOG_INFO("GRAW native pipelines: prepared {} shaders in {:.1f} s", total, s);
+  else
+    REXLOG_WARN("GRAW native pipelines: prepared {} of {} shaders in {:.1f} s; the rest finish "
+                "in the background (none finished in the last 10 s)", done, total, s);
+  return false;
 }
 
 void DrawRenderer::Impl::LogPrewarmReady() {
@@ -3217,6 +3279,8 @@ void DrawRenderer::LogResolve(const ResolveParams& p) {
                p.dest_height, p.dest_x, p.dest_y, p.clear_flags, p.clear_depth,
                uint32_t(p.clear_stencil), p.edram_x, p.edram_y);
 }
+
+bool DrawRenderer::PrepareShaders(float* progress) { return impl_->PrepareShaders(progress); }
 
 bool DrawRenderer::FrameIncomplete() const {
   const Impl& m = *impl_;

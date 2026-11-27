@@ -16,6 +16,10 @@ REXCVAR_DEFINE_BOOL(graw_native_pipeline_wait, true, "GRAW native",
                     "With --graw_native_async_pipelines, a frame whose draws need pipelines still "
                     "compiling is not shown and waits for them at its end, up to 0.5 s (false: "
                     "show it without those draws)");
+REXCVAR_DEFINE_BOOL(graw_native_prepare_shaders, true, "GRAW native",
+                    "At start, before the game's first frame: build every pipeline known from "
+                    "earlier runs and the recipes, with all compile threads, showing a progress "
+                    "bar (false: build them a slice per frame while playing)");
 REXCVAR_DEFINE_BOOL(graw_native_pipeline_cache, true, "GRAW native",
                     "Keep the shaders and pipelines the native renderer creates under "
                     "<cache_root>\\pgr4-native and compile them at start-up in later runs "
