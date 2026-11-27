@@ -130,14 +130,18 @@ impl Settings {
         let mut s: Settings = toml::from_str(text).map_err(|e| e.message().to_string())?;
         // F10 is the playtest report key now: dropped from bindings saved before it was.
         let defaults = default_keys();
+        // Keys are separated by spaces (input/keys.h); commas are accepted too.
+        let split = |keys: &str| -> Vec<String> {
+            keys.split(|c: char| c.is_whitespace() || c == ',').filter(|k| !k.is_empty()).map(str::to_string).collect()
+        };
         for (name, keys) in s.keys.iter_mut() {
-            if keys.split(',').any(|k| k.trim().eq_ignore_ascii_case("F10")) {
-                let kept: Vec<&str> =
-                    keys.split(',').map(str::trim).filter(|k| !k.eq_ignore_ascii_case("F10")).collect();
+            let all = split(keys);
+            if all.iter().any(|k| k.eq_ignore_ascii_case("F10")) {
+                let kept: Vec<String> = all.into_iter().filter(|k| !k.eq_ignore_ascii_case("F10")).collect();
                 *keys = if kept.is_empty() {
                     defaults.get(name).cloned().unwrap_or_default()
                 } else {
-                    kept.join(", ")
+                    kept.join(" ")
                 };
             }
         }
@@ -245,15 +249,25 @@ mod tests {
 
     #[test]
     fn classic_scheme() {
+        // Every binding in the classic file is a control and is taken as written (a renamed control
+        // or a typo there would otherwise fall back to its default unnoticed).
         let classic = classic_keys();
-        assert_eq!(classic.len(), default_keys().len());
+        for line in include_str!("../../input/grawbox-keys-classic.txt").lines() {
+            let line = line.split('#').next().unwrap();
+            let Some((name, value)) = line.split_once('=') else { continue };
+            if name.trim().starts_with("mouse_") {
+                continue;
+            }
+            assert_eq!(classic.get(name.trim()).map(String::as_str), Some(value.trim()), "{name}");
+        }
         assert_ne!(classic, default_keys());
     }
 
     #[test]
     fn f10_bindings_dropped() {
-        let s = Settings::parse("[keys]\na = 'R, F10'\nb = 'F10'\n").unwrap();
+        let s = Settings::parse("[keys]\na = 'R F10'\nb = 'F10'\nx = 'Q,F10 E'\n").unwrap();
         assert_eq!(s.keys["a"], "R");
+        assert_eq!(s.keys["x"], "Q E");
         assert_eq!(s.keys["b"], default_keys()["b"]);
     }
 

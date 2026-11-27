@@ -39,7 +39,7 @@ struct Capture {
 struct App {
     settings: Settings,
     /// Each game's last save time and when it was read: the Saves tab walks the save folders at most
-    /// every 2 s (and after an import or export), not every frame.
+    /// every 2 s (and after an import), not every frame.
     last_saved: Vec<Option<(std::time::Instant, Option<std::time::SystemTime>)>>,
     saved: Settings,
     tab: Tab,
@@ -391,7 +391,6 @@ impl App {
                     }
                     if ui.button("Export").clicked() {
                         if let Some(into) = rfd::FileDialog::new().set_title("Export to").pick_folder() {
-                            self.last_saved[i] = None;
                             self.message = Some(match saves::export(&user, g.title_id, g.name, &into) {
                                 Ok(p) => (true, format!("Exported to {}", p.display())),
                                 Err(e) => (false, e),
