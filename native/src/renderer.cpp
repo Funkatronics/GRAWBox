@@ -1044,7 +1044,8 @@ void NativeRenderer::LogHitch(const FrameStats& s, uint64_t frame_ns) {
   hitch_tex_bytes_ = ts.upload_bytes;
   if (!frame_ns) return;
   if (!typical_frame_ns_) {
-    typical_frame_ns_ = frame_ns;
+    // The first frame includes start-up; seeding with it would hide hitches for hundreds of frames.
+    typical_frame_ns_ = std::min<uint64_t>(frame_ns, 33333333);
     return;
   }
   // As GpuTimer::IsSpike: 1.75x the running mean and at least 5 ms more.
@@ -1061,7 +1062,11 @@ void NativeRenderer::LogHitch(const FrameStats& s, uint64_t frame_ns) {
   }
   if (++hitches_in_window_ > 20) return;
   const DrawStats& ds = backend_->draw_stats();
-  const char* cause = ds.pso_wait_us > 1000 || ds.pso_created ? "shaders"
+  // With asynchronous pipelines a new one only queues a job; the frame pays when it waits for it,
+  // or (compiling on the draw thread) when its draws take most of the frame.
+  const bool shaders =
+      ds.pso_wait_us > 1000 || (ds.pso_created && s.draw_ns > frame_ns / 2);
+  const char* cause = shaders                                  ? "shaders"
                       : tex_bytes > (4u << 20)               ? "textures"
                       : s.hook_wait_ns > frame_ns / 2         ? "renderer or GPU busy"
                                                              : "other";
