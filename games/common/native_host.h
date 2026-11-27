@@ -45,6 +45,9 @@ class NativeSettings : public rex::SettingOwner {
   REX_SETTING(std::string, hud_layout, "centered",
               "Menus and HUD on a wider picture: centered (16:9 in the middle) or stretched across",
               rex::Allowed("centered", "stretched"), rex::kRestart);
+  REX_SETTING(rex::i32, hud_scale, 100,
+              "GRAW 1: size of the menus and HUD in percent, about the middle of the picture",
+              rex::Range{50, 100}, rex::kRestart);
   REX_SETTING(bool, vsync, true, "Wait for the display when the native renderer presents",
               rex::kRestart);
   REX_SETTING(bool, shader_wait, true,
@@ -60,6 +63,8 @@ NativeSettings& Settings();
 double AspectRatio();
 // Whether menus and HUD are kept 16:9 in the middle of a wider picture (hud_layout).
 bool HudCentered();
+// The hud_scale setting as a factor, 0.5 to 1.
+double HudScale();
 void SetApp(rex::app::App* app);
 void Call(uint32_t function, PPCContext& ctx, uint8_t* base,
           void (*original)(PPCContext&, uint8_t*));

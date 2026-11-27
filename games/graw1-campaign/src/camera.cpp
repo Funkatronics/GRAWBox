@@ -56,13 +56,24 @@ REX_HOOK_RAW(sub_8212B298) {
 
 REX_EXTERN(__imp__sub_824C87D0);
 REX_HOOK_RAW(sub_824C87D0) {
-  // SetVertexShaderConstantF(device, start, data, count) from sub_8216EAA0: the GUI's map.
+  // SetVertexShaderConstantF(device, start, data, count) from sub_8216EAA0: the GUI's map from
+  // 1280x720 pixels to clip space, c0 = (x scale, 0, 0, x offset), c1 = (0, y scale, 0, y offset).
+  // Menus and HUD go through it; the world markers don't (they stay on their targets).
   static const double aspect = grawbox::AspectRatio();
-  if (static_cast<uint32_t>(ctx.lr) == 0x8216EB3C && aspect > 16.0 / 9.0 + 0.01 && grawbox::HudCentered()) {
-    const float k = static_cast<float>(16.0 / 9.0 / aspect);
+  static const float scale = static_cast<float>(grawbox::HudScale());
+  static const float across =
+      scale * static_cast<float>(aspect > 16.0 / 9.0 + 0.01 && grawbox::HudCentered()
+                                     ? 16.0 / 9.0 / aspect  // 16:9 in the middle
+                                     : 1.0);
+  if (static_cast<uint32_t>(ctx.lr) == 0x8216EB3C && (across != 1.0f || scale != 1.0f)) {
     const uint32_t c0 = ctx.r5.u32;  // on sub_8216EAA0's stack
-    Store32(base, c0, std::bit_cast<uint32_t>(LoadFloat(base, c0) * k));
-    Store32(base, c0 + 12, std::bit_cast<uint32_t>(LoadFloat(base, c0 + 12) * k));
+    auto times = [&](uint32_t at, float k) {
+      Store32(base, at, std::bit_cast<uint32_t>(LoadFloat(base, at) * k));
+    };
+    times(c0, across);
+    times(c0 + 12, across);
+    times(c0 + 20, scale);
+    times(c0 + 28, scale);
   }
   __imp__sub_824C87D0(ctx, base);
 }

@@ -43,6 +43,8 @@ pub struct Settings {
     pub aspect_ratio: String,
     /// Menus and HUD on a wider picture: centered or stretched.
     pub hud_layout: String,
+    /// GRAW 1: menus and HUD size in percent.
+    pub hud_scale: u32,
     pub anisotropy: u32,
     pub ambient_occlusion: u32,
     pub sharpness: f32,
@@ -69,6 +71,7 @@ impl Default for Settings {
             field_of_view: 100,
             aspect_ratio: "16:9".into(),
             hud_layout: "centered".into(),
+            hud_scale: 100,
             anisotropy: 16,
             ambient_occlusion: 0,
             sharpness: 0.0,
@@ -168,6 +171,7 @@ impl Settings {
         s.scale = s.scale.clamp(1, 3);
         s.anisotropy = s.anisotropy.clamp(1, 16);
         s.field_of_view = s.field_of_view.clamp(75, 150);
+        s.hud_scale = s.hud_scale.clamp(50, 100);
         s.ambient_occlusion = s.ambient_occlusion.min(100);
         s.haze_variant = s.haze_variant.clamp(1, 6);
         s.sharpness = number(s.sharpness, 0.0, 1.0, 0.0);
@@ -199,6 +203,7 @@ impl Settings {
             format!("--native.field_of_view={}", self.field_of_view),
             format!("--native.aspect_ratio={}", self.aspect_ratio),
             format!("--native.hud_layout={}", self.hud_layout),
+            format!("--native.hud_scale={}", self.hud_scale),
             format!("--native.anisotropy={}", self.anisotropy),
             format!("--native.ambient_occlusion={}", self.ambient_occlusion),
             format!("--native.sharpness={}", self.sharpness),
