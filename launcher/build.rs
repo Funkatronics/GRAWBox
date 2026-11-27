@@ -18,14 +18,16 @@ fn git(args: &[&str]) -> Option<String> {
 fn main() {
     let id = git(&["describe", "--tags", "--always", "--dirty"]).unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=GRAWBOX_BUILD={id}");
-    // An HTTPS URL (https://github.com/<owner>/<repo>.git) or an SSH one (<user> at github.com,
-    // then ":<owner>/<repo>.git").
+    // Any GitHub remote form: https:// or http:// (with or without a user), ssh://, git://, or the
+    // scp-like "<user> at github.com:<owner>/<repo>". The part after the host is the path.
     let repo = git(&["remote", "get-url", "origin"])
         .and_then(|url| {
-            let path = url.strip_prefix("https://github.com/").or_else(|| {
-                url.split_once('@').and_then(|(_, host)| host.strip_prefix("github.com:"))
-            })?;
-            Some(format!("https://github.com/{}", path.trim_end_matches(".git")))
+            let after_scheme = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
+            let host_and_path = after_scheme.rsplit_once('@').map_or(after_scheme, |(_, rest)| rest);
+            let path = host_and_path
+                .strip_prefix("github.com/")
+                .or_else(|| host_and_path.strip_prefix("github.com:"))?;
+            Some(format!("https://github.com/{}", path.trim_end_matches(".git").trim_end_matches('/')))
         })
         .unwrap_or_default();
     println!("cargo:rustc-env=GRAWBOX_REPO={repo}");
@@ -33,5 +35,6 @@ fn main() {
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/index");
     println!("cargo:rerun-if-changed=../.git/refs");
+    println!("cargo:rerun-if-changed=../.git/config");  // a changed remote
     println!("cargo:rerun-if-changed=src");
 }

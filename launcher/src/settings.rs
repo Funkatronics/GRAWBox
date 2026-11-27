@@ -111,7 +111,20 @@ impl Settings {
 
     fn parse(text: &str) -> Result<Settings, String> {
         let mut s: Settings = toml::from_str(text).map_err(|e| e.message().to_string())?;
-        for (name, keys) in default_keys() {
+        // F10 is the playtest report key now: dropped from bindings saved before it was.
+        let defaults = default_keys();
+        for (name, keys) in s.keys.iter_mut() {
+            if keys.split(',').any(|k| k.trim().eq_ignore_ascii_case("F10")) {
+                let kept: Vec<&str> =
+                    keys.split(',').map(str::trim).filter(|k| !k.eq_ignore_ascii_case("F10")).collect();
+                *keys = if kept.is_empty() {
+                    defaults.get(name).cloned().unwrap_or_default()
+                } else {
+                    kept.join(", ")
+                };
+            }
+        }
+        for (name, keys) in defaults {
             s.keys.entry(name).or_insert(keys);
         }
         // Values the games would refuse to start with.
@@ -211,6 +224,13 @@ mod tests {
         s.keys.insert("a".into(), "R".into());
         let text = toml::to_string_pretty(&s).unwrap();
         assert!(Settings::parse(&text).unwrap() == s);
+    }
+
+    #[test]
+    fn f10_bindings_dropped() {
+        let s = Settings::parse("[keys]\na = 'R, F10'\nb = 'F10'\n").unwrap();
+        assert_eq!(s.keys["a"], "R");
+        assert_eq!(s.keys["b"], default_keys()["b"]);
     }
 
     #[test]

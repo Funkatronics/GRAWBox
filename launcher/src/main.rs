@@ -213,12 +213,17 @@ impl App {
                                 if ui.small_button("Report a problem").clicked() {
                                     match report::pack(g, &settings::path()) {
                                         Ok((zip, used)) => {
-                                            report::show(&zip, g);
+                                            let opened = report::show(&zip, g);
                                             let holds = match used {
                                                 Some(name) => format!("the F10 report from {name}"),
                                                 None => "the end of the log (no F10 report in the last 30 minutes)".into(),
                                             };
-                                            self.message = Some((true, format!("Report saved with {holds}: {}. Drag it into the issue form.", zip.display())));
+                                            let next = if opened {
+                                                "Drag it into the issue form that just opened."
+                                            } else {
+                                                "Open a new issue on the GRAWBox GitHub page and attach it."
+                                            };
+                                            self.message = Some((true, format!("Report saved with {holds}: {}. {next}", zip.display())));
                                         }
                                         Err(e) => self.error(format!("The report could not be made: {e}")),
                                     }

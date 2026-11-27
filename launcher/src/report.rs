@@ -25,13 +25,14 @@ fn reports_dir(game: &Game) -> PathBuf {
 
 /// The newest folder a game's F10 wrote, if it was written in the last FRESH.
 fn newest_report(game: &Game) -> Option<PathBuf> {
-    let newest = fs::read_dir(reports_dir(game))
+    // By time, not name: several reports in one second differ only by a suffix.
+    let (modified, path) = fs::read_dir(reports_dir(game))
         .ok()?
         .filter_map(|e| e.ok())
         .filter(|e| e.path().is_dir())
-        .max_by_key(|e| e.file_name())?;
-    let age = newest.metadata().ok()?.modified().ok()?.elapsed().ok()?;
-    (age < FRESH).then(|| newest.path())
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .max_by_key(|(m, _)| *m)?;
+    (modified.elapsed().ok()? < FRESH).then_some(path)
 }
 
 /// Replaces the user's profile folder, user name and computer name, as the game does: the folder
@@ -121,8 +122,9 @@ pub fn pack(game: &Game, settings_file: &Path) -> io::Result<(PathBuf, Option<St
     Ok((out, used))
 }
 
-/// Shows the zip in Explorer and opens the issue form with the game and version filled in.
-pub fn show(zip: &Path, game: &Game) {
+/// Shows the zip in Explorer and opens the issue form with the game and version filled in. False if
+/// the form could not be opened (the launcher was built without a GitHub remote).
+pub fn show(zip: &Path, game: &Game) -> bool {
     let _ = std::process::Command::new("explorer").arg(format!("/select,{}", zip.display())).spawn();
     let label = if game.id == "graw1" { "Advanced Warfighter (GRAW 1)" } else { "Advanced Warfighter 2 (GRAW 2)" };
     if !REPO.is_empty() {
@@ -131,8 +133,9 @@ pub fn show(zip: &Path, game: &Game) {
             encode(label),
             encode(BUILD)
         );
-        let _ = std::process::Command::new("explorer").arg(url).spawn();
+        return std::process::Command::new("explorer").arg(url).spawn().is_ok();
     }
+    false
 }
 
 fn encode(s: &str) -> String {

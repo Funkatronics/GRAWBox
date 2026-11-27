@@ -170,14 +170,22 @@ void Write(void (*screenshot)(const char* path)) {
   // Two reports in the same second (a key repeat, a test trigger) get their own folders.
   std::error_code ec;
   fs::path dir = base / "reports" / stamp;
-  for (int i = 1; fs::exists(dir, ec) && i < 100; ++i)
-    dir = base / "reports" / (std::string(stamp) + "-" + std::to_string(i));
+  for (int i = 1; fs::exists(dir, ec); ++i) {
+    if (i == 100) {
+      REXLOG_WARN("GRAW report: 100 reports in one second, not written");
+      return;
+    }
+    char suffix[8];
+    std::snprintf(suffix, sizeof(suffix), "-%02d", i);  // sorts by name: -09 before -10
+    dir = base / "reports" / (std::string(stamp) + suffix);
+  }
   fs::create_directories(dir, ec);
   if (ec) {
     REXLOG_WARN("GRAW report: cannot create the report folder ({})", ec.message());
     return;
   }
-  REXLOG_INFO("GRAW report: written at {} (build {})", stamp, GRAWBOX_BUILD);
+  REXLOG_INFO("GRAW report: written to reports/{} (build {})", Utf8(dir.filename().wstring()),
+              GRAWBOX_BUILD);
   if (screenshot) screenshot(Utf8((dir / "screenshot.png").wstring()).c_str());
   WriteText(dir / "info.txt", Info());
   if (auto log = REX_SETTINGS().Find("log.file_name"); log && !(*log)->GetText().empty())

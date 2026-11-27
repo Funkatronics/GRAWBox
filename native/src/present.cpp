@@ -71,7 +71,7 @@ namespace {
 // a later frame and an older report.
 std::mutex g_shot_mutex;
 std::filesystem::path g_shot, g_shot_claimed;
-std::chrono::steady_clock::time_point g_shot_time;
+std::chrono::steady_clock::time_point g_shot_time, g_shot_claimed_time;
 
 // The display controller's gamma ramp: gamma_ramp.h.
 constexpr uint32_t kRampSlotBytes = kPwlWords * 4;  // a multiple of the 256-byte CBV alignment
@@ -338,7 +338,13 @@ bool Presenter::Impl::WriteRamp(RampMode mode, uint32_t slot) {
 }
 
 bool Presenter::Impl::CaptureRequested(uint64_t frame) {
-  if (DebugCaptureRequested(frame)) return true;  // a screenshot waits a frame for it
+  if (DebugCaptureRequested(frame)) {
+    // A screenshot waits a frame for it, with its clock paused: a long debug burst must not
+    // drop it.
+    std::lock_guard lock(g_shot_mutex);
+    if (!g_shot.empty()) g_shot_time = std::chrono::steady_clock::now();
+    return true;
+  }
   std::lock_guard lock(g_shot_mutex);
   if (g_shot.empty()) return false;
   if (std::chrono::steady_clock::now() - g_shot_time > std::chrono::seconds(2)) {
@@ -348,6 +354,7 @@ bool Presenter::Impl::CaptureRequested(uint64_t frame) {
   }
   g_shot_claimed = std::move(g_shot);
   g_shot.clear();
+  g_shot_claimed_time = std::chrono::steady_clock::now();
   return true;
 }
 
@@ -413,6 +420,7 @@ void Presenter::Impl::WriteCapture() {
     REXLOG_INFO("GRAW native capture: frame {} {}x{} ({}\\{}{})", frame, w, h, dir.string(), name,
                 ok ? "" : ", write failed");
   });
+  c.shot.clear();  // moved from: empty for ReleaseCapture's check
 }
 
 void Presenter::Impl::FinishCapture() {
@@ -616,8 +624,14 @@ void Presenter::Impl::OnSwap(const SwapCall& swap, bool shown) {
     if (glitch.on()) glitch.Mark(r.frame_index());
     c.armed = true;
     {
+      // A claimed screenshot that waited over 2 s (its frame dropped, or a capture already armed
+      // when it was claimed) is not used: it would be a much later frame in an older report.
       std::lock_guard lock(g_shot_mutex);
-      c.shot = std::move(g_shot_claimed);
+      const bool fresh =
+          std::chrono::steady_clock::now() - g_shot_claimed_time < std::chrono::seconds(2);
+      if (!g_shot_claimed.empty() && !fresh)
+        REXLOG_WARN("GRAW native screenshot: claimed too long ago, dropped");
+      c.shot = fresh ? std::move(g_shot_claimed) : std::filesystem::path();
       g_shot_claimed.clear();
     }
     c.xenos = c.shot.empty() && REXCVAR_GET(graw_native_capture_xenos);
