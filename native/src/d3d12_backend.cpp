@@ -185,7 +185,13 @@ Backend::SwapResult D3D12Backend::Swap(const SwapCall& swap, std::optional<bool>
   // stays on screen while the next one waits for them.
   r.incomplete = draw_->FrameIncomplete();
   if (own_window && !OwnGameWindow(*own_window)) return r;
-  const bool shown = !r.incomplete && d.has_swapchain();
+  // Shaders prepared up front, at the game's first frame: only with the window to show the
+  // progress on (else the per-frame warm-up does it, as with the setting off). That frame is not
+  // presented, so the pacer counts the progress screens' presents in order.
+  const bool prepare = preparing_ && d.has_swapchain();
+  if (preparing_ && !prepare) draw_->EndPrepare();
+  preparing_ = false;
+  const bool shown = !r.incomplete && d.has_swapchain() && !prepare;
   // The resolved front buffer into the back buffer (PRESENT in and out).
   present_->OnSwap(swap, shown);
   // The frame's texture copies read upload memory the untile workers fill.
@@ -203,19 +209,23 @@ Backend::SwapResult D3D12Backend::Swap(const SwapCall& swap, std::optional<bool>
   r.presents = et.presents;
   r.completed = d.completed_fence();
   r.ok = true;
-  // At the game's first frame: shaders prepared before play (the game waits here), with a
-  // progress bar shown meanwhile.
-  if (preparing_) {
+  if (prepare) {
     float progress = 0;
     while (draw_->PrepareShaders(&progress)) {
-      if (d.has_swapchain()) {
-        RecordPreparing(progress);
-        if (!d.EndFrame(true)) break;
-      } else {
-        Sleep(15);
+      const uint64_t fence = d.frame_fence();
+      RecordPreparing(progress);
+      if (!d.EndFrame(true)) {
+        draw_->EndPrepare();
+        r.ok = false;
+        return r;
+      }
+      if (pacer_) {
+        if (d.end_frame_times().presented)
+          pacer_->Presented(fence);
+        else
+          pacer_->RetireUnshown();
       }
     }
-    preparing_ = false;
     r.completed = d.completed_fence();
   }
   return r;

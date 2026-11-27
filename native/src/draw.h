@@ -120,6 +120,9 @@ class DrawRenderer {
   // At Swap, after EndFrame, until it returns false: the up-front shader preparation (the game
   // waits meanwhile). `progress` is 0 to 1 for the progress screen.
   bool PrepareShaders(float* progress);
+  // Ends or skips the preparation (the first frame had no window, or a present failed): the
+  // rest is built a slice per frame.
+  void EndPrepare();
   // Per frame, with the fence values of D3D12Backend (once per Swap, after EndFrame).
   void EndFrame(uint64_t completed_fence);
 

@@ -1742,7 +1742,7 @@ bool DrawRenderer::Impl::PrepareShaders(float* progress) {
   // hold the start: after 10 s without one finishing, the rest finish in the background.
   if (prepare_done) return false;
   const size_t total = store.loaded_pipelines().size();
-  const auto now = std::chrono::steady_clock::now();
+  auto now = std::chrono::steady_clock::now();
   if (!prepare_started) {
     prepare_started = true;
     if (!REXCVAR_GET(graw_native_prepare_shaders) || pso_threads.empty() || !total) {
@@ -1756,6 +1756,7 @@ bool DrawRenderer::Impl::PrepareShaders(float* progress) {
   }
   // Translating and queueing in slices, so the progress screen keeps moving.
   Prewarm(std::chrono::milliseconds(15));
+  now = std::chrono::steady_clock::now();
   pso_cv.notify_all();
   pso_wait_cv.notify_all();
   uint32_t done;
@@ -3281,6 +3282,14 @@ void DrawRenderer::LogResolve(const ResolveParams& p) {
 }
 
 bool DrawRenderer::PrepareShaders(float* progress) { return impl_->PrepareShaders(progress); }
+
+void DrawRenderer::EndPrepare() {
+  Impl& m = *impl_;
+  if (m.prepare_done) return;
+  m.prepare_started = m.prepare_done = true;
+  std::lock_guard<std::mutex> lock(m.pso_mutex);
+  m.preparing = false;
+}
 
 bool DrawRenderer::FrameIncomplete() const {
   const Impl& m = *impl_;
