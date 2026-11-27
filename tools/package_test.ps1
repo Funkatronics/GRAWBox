@@ -2,11 +2,13 @@
 # folder it only adds files: bin-native\ and PLAY-NATIVE-*.bat. Programs hold translated game code:
 # the output folder must stay untracked and is not for sharing.
 #   tools/package_test.ps1 -Game graw1|graw2 -Out <folder> -Runtime <folder with the C++ runtime DLLs>
+#                          [-Recipes <recipe file from tools/make_recipes.ps1>]
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('graw1', 'graw2')][string]$Game,
     [Parameter(Mandatory)][string]$Out,
-    [string]$Runtime
+    [string]$Runtime,
+    [string]$Recipes
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -25,6 +27,7 @@ if ($Runtime) {
         Copy-Item -Destination $bin
 }
 Copy-Item (Join-Path $root 'input\grawbox-keys*.txt') $bin
+if ($Recipes) { Copy-Item -LiteralPath $Recipes (Join-Path $bin 'grawbox-recipes.bin') }
 foreach ($needed in "${Game}_campaign.exe", 'grawbox_native.dll', 'rexgpu-xenos-d3d12.dll') {
     if (-not (Test-Path (Join-Path $bin $needed))) { throw "$needed is missing from $release" }
 }

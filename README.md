@@ -33,6 +33,9 @@ Microsoft. Trademarks belong to their owners.
 - [graw360-recomp](https://github.com/Juansolo457/graw360-recomp) (MIT, juansolo457 and
   contributors): its port of the native renderer and the GRAW Direct3D
   research behind it, and the cause of, and labels for, the GRAW 1 HUD blend jump table fix.
+- [COGBox](https://github.com/Shagg88/COGBox) (MIT, Shagg): how compiled shaders are laid out in
+  newer Xbox 360 shader containers, and the approach of preparing shaders from recorded recipes and
+  the player's own game files.
 - [Rajdhani](https://github.com/google/fonts/tree/main/ofl/rajdhani) (SIL Open Font License 1.1, Indian Type Foundry): the
   launcher's font, downloaded at build time.
 

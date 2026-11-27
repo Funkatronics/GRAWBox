@@ -20,6 +20,12 @@ REXCVAR_DEFINE_BOOL(graw_native_pipeline_cache, true, "GRAW native",
                     "Keep the shaders and pipelines the native renderer creates under "
                     "<cache_root>\\pgr4-native and compile them at start-up in later runs "
                     "(prewarm, plus a D3D12 pipeline library)");
+REXCVAR_DEFINE_STRING(graw_native_shader_file, "", "GRAW native",
+                      "The games' compiled shaders (NewYetiShadersX360.sdf in the game folder): with "
+                      "--graw_native_recipes, the pixel shaders recipes need are warmed from it");
+REXCVAR_DEFINE_STRING(graw_native_recipes, "", "GRAW native",
+                      "Recipe file (pipelines.bin format without shaders): pipelines recorded in "
+                      "playtests, built or warmed at start-up as the store's are");
 REXCVAR_DEFINE_STRING(graw_native_watch_trace, "", "GRAW native",
                       "Binary log of vertex write-watch events (arms and faults, one 64-bit "
                       "record each, see WatchTrace) for offline analysis of the watch policy");

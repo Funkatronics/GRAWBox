@@ -16,6 +16,7 @@
 #include "log.h"
 #include "pipeline_library.h"
 #include "pipeline_store.h"
+#include "disc_shaders.h"
 #include "post.h"
 #include "profile.h"
 #include "render_targets.h"
@@ -67,6 +68,8 @@ REXCVAR_DECLARE(bool, graw_native_async_pipelines);
 REXCVAR_DECLARE(int32_t, graw_native_pipeline_threads);
 REXCVAR_DECLARE(bool, graw_native_pipeline_wait);
 REXCVAR_DECLARE(bool, graw_native_pipeline_cache);
+REXCVAR_DECLARE(std::string, graw_native_shader_file);
+REXCVAR_DECLARE(std::string, graw_native_recipes);
 REXCVAR_DECLARE(std::string, graw_native_watch_trace);
 REXCVAR_DECLARE(bool, graw_native_coherency_check);
 REXCVAR_DECLARE(bool, graw_native_implicit_gradients);
@@ -482,6 +485,7 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC desc;  // bytecode and root signature outlive the job
     bool logged = false;                      // a draw needed it new: its compile time is logged
     bool from_store = false;  // queued by Prewarm, from earlier runs (counted for the ready log)
+    bool warm_only = false;   // never drawn (a stand-in vertex shader): kept out of the library
   };
   std::vector<std::thread> pso_threads;
   std::mutex pso_mutex;
@@ -497,6 +501,10 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   bool generic_pipelines = false;        // --graw_native_generic_pipelines (with worker threads)
   std::vector<Pipeline*> frame_pending;  // pipelines of the frame's skipped draws, once each
   PipelineStore store;
+  // The games' own compiled shaders (--graw_native_shader_file): recipes' shaders not in `store`.
+  DiscShaders disc;
+  uint32_t prewarm_warm_only = 0;  // recipes whose pixel stage was warmed with a stand-in VS
+  uint32_t prewarm_no_shader = 0;  // recipes whose shaders are in neither the store nor the files
   // What made the pipelines created while running new (logged, kNewPipelineLog lines): a
   // shader pair or a render state no pipeline had before, bool or texture-sign variants.
   // Counted only while those lines are logged: nothing reads them afterwards.
@@ -781,7 +789,8 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   // Adds the pipeline under `hash` and creates it (queued on pso_threads when they run; a
   // prewarm job waits behind every draw's job).
   Pipeline* CreatePipeline(uint64_t hash, const PipelineKey& key, const DxbcShader::Translation& vs,
-                           const DxbcShader::Translation* ps, bool prewarm, bool from_store = false);
+                           const DxbcShader::Translation* ps, bool prewarm, bool from_store = false,
+                           bool warm_only = false);
   // Logs once that every pipeline from earlier runs is ready: all queued (prewarm_queued) and
   // each one compiled, loaded, failed or needed by a draw first. Under pso_mutex.
   void LogPrewarmReady();
@@ -972,6 +981,15 @@ bool DrawRenderer::Impl::Initialize() {
       // Shaders translated the other way can't share the cache's pipelines.
       dir /= rex::graphics::g_dxbc_implicit_gradients ? "graw-native" : "graw-native-gradients";
       store.Open(dir, sizeof(PipelineKey), kPipelineKeyVersion);
+      // Paths come from the host in UTF-8. The game's shader file is only read for recipes.
+      auto utf8 = [](const std::string& s) {
+        return std::filesystem::path(std::u8string(s.begin(), s.end()));
+      };
+      size_t recipes = 0;
+      if (const std::string file = REXCVAR_GET(graw_native_recipes); !file.empty())
+        recipes = store.AddRecipes(utf8(file), kPipelineKeyVersion);
+      if (const std::string sdf = REXCVAR_GET(graw_native_shader_file); recipes && !sdf.empty())
+        disc.Load(utf8(sdf));
       // The store keeps guest shaders and keys, translated again at start-up, so every scale
       // warms up the pipelines any run has seen; the compiled pipelines differ per scale.
       const uint32_t scale = DrawResolutionScale();
@@ -1022,9 +1040,11 @@ void DrawRenderer::Impl::PipelineWorker(bool saves, bool on_wait) {
     queue.pop_front();
     lock.unlock();
     ComPtr<ID3D12PipelineState> pso;
-    bool loaded;
     const auto t0 = std::chrono::steady_clock::now();
-    const HRESULT hr = library.Create(job.desc, &pso, &loaded);
+    bool loaded = false;
+    const HRESULT hr =
+        job.warm_only ? device->CreateGraphicsPipelineState(&job.desc, IID_PPV_ARGS(&pso))
+                      : library.Create(job.desc, &pso, &loaded);
     if (job.logged)
       GRAW_LOG_FIRST(
           kNewPipelineLog, INFO, "GRAW native pipelines: compiled in {:.1f} ms{}",
@@ -1514,7 +1534,8 @@ DrawRenderer::Impl::Pipeline* DrawRenderer::Impl::CreatePipeline(uint64_t hash,
                                                                  const PipelineKey& key,
                                                                  const DxbcShader::Translation& vs,
                                                                  const DxbcShader::Translation* ps,
-                                                                 bool prewarm, bool from_store) {
+                                                                 bool prewarm, bool from_store,
+                                                                 bool warm_only) {
   D3D12_GRAPHICS_PIPELINE_STATE_DESC d;
   std::memset(&d, 0, sizeof(d));  // padding too: PipelineLibrary hashes the bytes
   d.pRootSignature = root_signature.Get();
@@ -1593,7 +1614,7 @@ DrawRenderer::Impl::Pipeline* DrawRenderer::Impl::CreatePipeline(uint64_t hash,
     p->prewarm = prewarm;
     {
       std::lock_guard<std::mutex> lock(pso_mutex);
-      (prewarm ? prewarm_jobs : pso_jobs).push_back({p, d, !prewarm, from_store});
+      (prewarm ? prewarm_jobs : pso_jobs).push_back({p, d, !prewarm, from_store, warm_only});
     }
     pso_cv.notify_one();
     return p;
@@ -1612,18 +1633,32 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
   const std::vector<PipelineStore::Pipeline>& list = store.loaded_pipelines();
   if (prewarm_next >= list.size()) return;
   const auto t0 = std::chrono::steady_clock::now();
+  // A shader from this player's store, else from the game's files (recipes from playtests).
   auto load = [&](uint64_t hash, xenos::ShaderType type) -> DxbcShader* {
-    const PipelineStore::Shader* s = store.loaded_shader(hash);
-    if (!s || s->type != uint32_t(type) || s->ucode.empty()) return nullptr;
-    return shaders.Load(type, s->ucode.data(), uint32_t(s->ucode.size()));
+    if (const PipelineStore::Shader* s = store.loaded_shader(hash);
+        s && s->type == uint32_t(type) && !s->ucode.empty())
+      return shaders.Load(type, s->ucode.data(), uint32_t(s->ucode.size()));
+    const DiscShaders::Shader* d = disc.Find(hash);
+    if (!d || d->pixel != (type == xenos::ShaderType::kPixel)) return nullptr;
+    return shaders.Load(type, d->ucode.data(), uint32_t(d->ucode.size()));
   };
   do {
     const PipelineStore::Pipeline& sp = list[prewarm_next++];
     DxbcShader* vs = load(sp.vs_hash, xenos::ShaderType::kVertex);
     DxbcShader* ps = sp.ps_hash ? load(sp.ps_hash, xenos::ShaderType::kPixel) : nullptr;
+    // A drawn vertex shader is patched for its vertex layout, so it is never in the game's files.
+    // With the pixel shader at hand, any vertex shader translated with the recipe's modification
+    // (which alone decides what it passes to the pixel shader) builds a pipeline that is never
+    // drawn but has the driver compile the pixel stage the real one will use.
+    const bool warm_only = !vs && ps && disc.stand_in_vertex();
+    if (warm_only) {
+      const DiscShaders::Shader& s = *disc.stand_in_vertex();
+      vs = shaders.Load(xenos::ShaderType::kVertex, s.ucode.data(), uint32_t(s.ucode.size()));
+    }
     DxbcShader::Translation* vst = vs ? shaders.Translate(*vs, sp.vs_mod) : nullptr;
     DxbcShader::Translation* pst = ps ? shaders.Translate(*ps, sp.ps_mod) : nullptr;
     if (!vst || (sp.ps_hash && !pst) || sp.key.size() != sizeof(PipelineKey)) {
+      if (!vs || (sp.ps_hash && !ps)) ++prewarm_no_shader;
       ++prewarm_failed;
       continue;
     }
@@ -1643,18 +1678,22 @@ void DrawRenderer::Impl::Prewarm(std::chrono::milliseconds budget) {
     key.vs = vst;
     key.ps = pst;
     const uint64_t hash = XXH3_64bits(&key, sizeof(key));
-    if (!pipelines.count(hash))
-      CreatePipeline(hash, key, *vst, pst, true, true);
-    else
+    if (!pipelines.count(hash)) {
+      CreatePipeline(hash, key, *vst, pst, true, true, warm_only);
+      prewarm_warm_only += warm_only;
+    } else {
       ++prewarm_skipped;  // a draw needed it first
+    }
   } while (prewarm_next < list.size() && std::chrono::steady_clock::now() - t0 < budget);
   prewarm_ms +=
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   ++prewarm_frames;
   if (prewarm_next < list.size()) return;
   REXLOG_INFO(
-      "GRAW native pipelines: prewarm queued {} pipelines ({} failed) in {:.1f} ms over {} frames",
-      list.size() - prewarm_failed.load(), prewarm_failed.load(), prewarm_ms, prewarm_frames);
+      "GRAW native pipelines: prewarm queued {} pipelines ({} only to warm a pixel shader from the "
+      "game's files, {} failed, {} of them for want of a shader) in {:.1f} ms over {} frames",
+      list.size() - prewarm_failed.load(), prewarm_warm_only, prewarm_failed.load(),
+      prewarm_no_shader, prewarm_ms, prewarm_frames);
   // The last entries may have been skipped or failed after the workers finished the others.
   std::lock_guard<std::mutex> lock(pso_mutex);
   prewarm_queued = true;
