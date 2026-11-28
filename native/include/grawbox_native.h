@@ -62,5 +62,8 @@ GRAWBOX_NATIVE_API void grawbox_native_call(uint8_t* base, const GrawboxCall* ca
 GRAWBOX_NATIVE_API bool grawbox_native_drawing();
 GRAWBOX_NATIVE_API bool grawbox_native_start(const GrawboxHost* host, const GrawboxTitle* title);
 GRAWBOX_NATIVE_API void grawbox_native_request_switch();
+// The game enters (true) or leaves (false) a node of its GUI tree on the drawing thread, so the
+// HUD's draws are known by the element they belong to (the HUD layout).
+GRAWBOX_NATIVE_API void grawbox_native_gui_node(uint32_t node, bool enter);
 // Writes the next presented frame as a PNG to `utf8_path` (playtest reports).
 GRAWBOX_NATIVE_API void grawbox_native_request_screenshot(const char* utf8_path);

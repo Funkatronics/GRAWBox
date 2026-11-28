@@ -68,6 +68,7 @@ decltype(&grawbox_native_call) g_call = nullptr;
 decltype(&grawbox_native_request_switch) g_request_switch = nullptr;
 decltype(&grawbox_native_request_screenshot) g_request_screenshot = nullptr;  // optional
 decltype(&grawbox_native_drawing) g_native_drawing = nullptr;  // whether native presents now
+decltype(&grawbox_native_gui_node) g_gui_node = nullptr;          // optional
 
 // The screenshot request, while the native renderer presents (after F9 the emulated one does, and
 // nothing would take it).
@@ -317,6 +318,7 @@ bool Start() {
       GetProcAddress(native, "grawbox_native_request_screenshot"));
   g_native_drawing = reinterpret_cast<decltype(g_native_drawing)>(
       GetProcAddress(native, "grawbox_native_drawing"));
+  g_gui_node = reinterpret_cast<decltype(g_gui_node)>(GetProcAddress(native, "grawbox_native_gui_node"));
   rex::kernel::ThreadState* thread = rex::kernel::ThreadState::Get();
   if (!thread || !thread->GetAddressSpace()) return false;
   g_memory = thread->GetAddressSpace();
@@ -371,6 +373,10 @@ NativeSettings& Settings() {
 void SetApp(rex::app::App* app) {
   g_app = app;
   EnableDred();
+}
+
+void GuiNode(uint32_t node, bool enter) {
+  if (g_gui_node) g_gui_node(node, enter);
 }
 
 void Call(uint32_t function, PPCContext& ctx, uint8_t* base,

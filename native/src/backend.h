@@ -68,6 +68,8 @@ struct DrawPrep {
   // --graw_native_mark_audit: the ranges to check, set by the render side like `copies`.
   const AuditRange* audit = nullptr;
   uint32_t audit_count = 0;
+  // The HUD layout's scissor across, in guest pixels (x0 < x1: replaces the guest's).
+  int32_t hud_scissor_x0 = 0, hud_scissor_x1 = 0;
 };
 
 // The draw path's counters, per frame (the frame CSV's columns).

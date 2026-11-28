@@ -66,6 +66,8 @@ double AspectRatio();
 // Whether menus and HUD are kept 16:9 in the middle of a wider picture (hud_layout).
 bool HudCentered();
 void SetApp(rex::app::App* app);
+// The title's GUI drawing enters or leaves a node of its tree (grawbox_native_gui_node).
+void GuiNode(uint32_t node, bool enter);
 void Call(uint32_t function, PPCContext& ctx, uint8_t* base,
           void (*original)(PPCContext&, uint8_t*));
 
