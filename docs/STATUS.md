@@ -41,6 +41,12 @@ Updated 2026-11-27. "WARP" is the software GPU used for automated runs; "tester"
 
 ## Open
 
+- **Tac map stretched on wide aspects (#13, draft PR with notes).** Not started in code. The reticle fix
+  (`OverlayIs16x9` in native/src/draw.cpp: a 16:9 projection in VS c4..c7, c4.x scaled by k) doesn't catch the map;
+  how the map is drawn is unknown. Opening it on WARP: GRAW 2's training mission only allows it once the tutorial asks;
+  GRAW 1's helicopter save (private/graw1/heli.txt) gets to gameplay, but Back held right after landing (500 s, popups
+  up) did nothing; later presses untested. Next: map open in a run, a draw log of those frames
+  (GRAWBOX_NATIVE_DRAW_LOG_FROM/FRAMES), then fix by what its draws carry.
 - **GRAW 1: flicker and corrupted graphics while paused**, started by switching to another window; stays after returning and
   ends when unpausing (tester). Not reproduced on WARP: pausing, minimizing, restoring and changing focus, windowed and
   fullscreen, stayed clean. Not seen in GRAW 2. It stops while the snipping tool is open, so there is no capture. The
