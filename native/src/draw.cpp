@@ -3851,9 +3851,17 @@ void DrawRenderer::EndFrame(uint64_t completed_fence) {
 }  // namespace graw::native
 
 GRAWBOX_NATIVE_API void grawbox_native_gui_node(uint32_t node, bool enter) {
+  // Nodes past 64 deep are left off the path; `deeper` counts them so leaving one pops nothing.
+  thread_local uint32_t deeper = 0;
+  auto& nodes = graw::native::t_gui_nodes;
   if (enter) {
-    if (graw::native::t_gui_nodes.size() < 64) graw::native::t_gui_nodes.push_back(node);
-  } else if (!graw::native::t_gui_nodes.empty()) {
-    graw::native::t_gui_nodes.pop_back();
+    if (nodes.size() < 64)
+      nodes.push_back(node);
+    else
+      ++deeper;
+  } else if (deeper) {
+    --deeper;
+  } else if (!nodes.empty()) {
+    nodes.pop_back();
   }
 }
