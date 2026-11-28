@@ -25,7 +25,7 @@ try {
     git fetch -q origin main
     if ($LASTEXITCODE) { throw 'git fetch failed' }
     $branch = git rev-parse --abbrev-ref HEAD
-    if ($branch -ne 'main') { throw "on $branch: check out main first" }
+    if ($branch -ne 'main') { throw "on ${branch}: check out main first" }
     if (git status --porcelain --untracked-files=no) { throw 'tracked files are changed: commit or stash them first' }
     $head = git rev-parse HEAD
     if ($head -ne (git rev-parse origin/main)) { throw 'main differs from origin/main: pull first' }
