@@ -309,10 +309,10 @@ static uint32_t LoadBE32(const uint8_t* p) {
   return __builtin_bswap32(v);
 }
 
-// The HUD on a wide picture (--graw_native_hud_layout edges or centered). The games draw menus
-// and HUD in 1280x720 pixels through one pixel-to-clip map (c0 = (2k/1280, 0, 0, -k),
+// The HUD spread over a wide picture (--graw_native_hud_layout=edges). The games draw menus and
+// HUD in 1280x720 pixels through one pixel-to-clip map (c0 = (2k/1280, 0, 0, -k),
 // c1 = (0, -2/720, 0, 1)), which the game hook narrows by k = 16:9 over the aspect so they keep
-// their shape in the middle 16:9 (centered). With edges the HUD is spread over the wide picture.
+// their shape in the middle 16:9.
 //
 // The 16:9 HUD is mapped onto the wide picture across: x goes to 640 + (x - 640) / k. The HUD's
 // big pieces (the frame, its bars with what is drawn on them, overlays) are stretched that way,
@@ -334,9 +334,6 @@ static uint32_t LoadBE32(const uint8_t* p) {
 //   can take several draws) move as one line, with the piece placed whole they sit on if any (the
 //   ammo count on its panel); any other quad narrower than 400 pixels and lower than 300 alone,
 //   bigger ones stretched.
-// A draw clipped to part of the screen moves as one piece with its clip rectangle. In both layouts
-// the rectangle is narrowed like the map, so the window shows what it shows at 16:9 (the game sets
-// it for the 1280 pixels the map no longer fills).
 // The positions are moved in guest memory before the mirror copies them: the games write these
 // vertices fresh each frame, and a draw whose bytes are already moved (same hash as after the
 // last move) is left alone.
@@ -346,8 +343,6 @@ class HudEdges {
   // as it is now, since pages it copied before count as current.
   struct Moved {
     uint32_t start = 0, length = 0;
-    // The draw's scissor across, in guest pixels, when it changes (x0 < x1).
-    int32_t scissor_x0 = 0, scissor_x1 = 0;
   };
 
   Moved Apply(const DrawState& s, const rex::graphics::Shader& vs, uint8_t* membase) {
@@ -355,9 +350,8 @@ class HudEdges {
       const double aspect = REXCVAR_GET(graw_native_aspect);
       return aspect > 16.0 / 9.0 + 0.01 ? float(16.0 / 9.0 / aspect) : 1.0f;
     }();
-    static const bool edges = REXCVAR_GET(graw_native_hud_layout) == "edges";
-    static const bool centered = REXCVAR_GET(graw_native_hud_layout) == "centered";
-    if (!(edges || centered) || k == 1.0f || s.indexed) return {};
+    static const bool on = REXCVAR_GET(graw_native_hud_layout) == "edges";
+    if (!on || k == 1.0f || s.indexed) return {};
     // Vertices per element: a quad list's quads, a triangle list's pairs of triangles, a
     // rectangle list's rectangles; a strip is one element.
     uint32_t per = 0;
@@ -385,24 +379,12 @@ class HudEdges {
         std::fabs(f(7) - 1.0f) > 1e-3f)
       return {};
     const auto& regs = *reinterpret_cast<const rex::graphics::RegisterFile*>(s.regs);
-    Moved out;
-    Scissor scissor;
-    HostScissor(regs, scissor);
-    const Box clip = {int(scissor.offset[0]), int(scissor.offset[0] + scissor.extent[0]), 0, 0};
-    const bool clipped = clip.x0 > 0 || clip.x1 < 1280;
-    float clip_shift = 0;
-    if (clipped) {
-      if (edges) clip_shift = Shift(clip, k);
-      out.scissor_x0 = int(std::floor(640.0f + (float(clip.x0) + clip_shift - 640.0f) * k));
-      out.scissor_x1 = int(std::ceil(640.0f + (float(clip.x1) + clip_shift - 640.0f) * k));
-    }
-    if (!edges) return out;
     // The position: the first attribute, at the start of each vertex, as signed 16-bit integers
     // (two to a big-endian dword, the first component in the low half) or 32-bit floats; the
     // fetch's swizzle says which components are x and y. The draw's vertices start at the index
     // offset (the HUD's draws share one buffer).
     const auto& bindings = vs.vertex_bindings();
-    if (bindings.empty() || bindings[0].attributes.empty()) return out;
+    if (bindings.empty() || bindings[0].attributes.empty()) return {};
     const auto& b = bindings[0];
     const auto& fi = b.attributes[0].fetch_instr;
     const auto& a = fi.attributes;
@@ -412,16 +394,16 @@ class HudEdges {
                         a.data_format == xenos::VertexFormat::k_32_32_32_FLOAT ||
                         a.data_format == xenos::VertexFormat::k_32_32_32_32_FLOAT;
     const uint32_t cx = uint32_t(fi.result.components[0]), cy = uint32_t(fi.result.components[1]);
-    if (!(shorts || floats) || a.offset != 0 || !b.stride_words || cx > 3 || cy > 3) return out;
+    if (!(shorts || floats) || a.offset != 0 || !b.stride_words || cx > 3 || cy > 3) return {};
     const xenos::xe_gpu_vertex_fetch_t vf = regs.GetVertexFetch(b.fetch_constant);
     if (vf.type != xenos::FetchConstantType::kVertex ||
         xenos::Endian(vf.endian) != xenos::Endian::k8in32)
-      return out;
+      return {};
     const uint32_t stride = b.stride_words * 4;
     const uint32_t first = s.regs[XE_GPU_REG_VGT_INDX_OFFSET];
     const uint64_t end = (uint64_t(first) + s.count) * stride;
     if (end > (uint64_t(vf.size) << 2) || (uint64_t(vf.address) << 2) + end > (uint64_t(512) << 20))
-      return out;
+      return {};
     const uint32_t base = (vf.address << 2) + first * stride, bytes = s.count * stride;
     uint8_t* v = membase + base;
     const std::vector<uint32_t>& path = t_gui_nodes;
@@ -429,9 +411,7 @@ class HudEdges {
         it != moved_.end() && it->second.hash == XXH3_64bits(v, bytes)) {
       for (const Box& bx : it->second.boxes) Note(path, bx);
       if (it->second.placed && placed_.size() < kMaxPlaced) placed_.push_back(*it->second.placed);
-      out.start = base;
-      out.length = bytes;
-      return out;
+      return {base, bytes};
     }
 
     // Byte of component c in a vertex: a float's dword, or a short's half of its dword.
@@ -466,14 +446,13 @@ class HudEdges {
       for (uint32_t i = q * per; i < q * per + per; ++i) {
         const float x = get(i, cx), y = get(i, cy);
         if (!std::isfinite(x) || !std::isfinite(y) || std::fabs(x) > 1e5f || std::fabs(y) > 1e5f)
-          return out;
+          return {};
         Grow(bx, {int(std::floor(x)), int(std::ceil(x)), int(std::floor(y)), int(std::ceil(y))});
       }
       Note(path, bx);
     }
     if (trace_ && s.guest_base) {
       std::fprintf(trace_, "d %llu %08X", (unsigned long long)frame_index_, base);
-      if (clipped) std::fprintf(trace_, " clip %d..%d", clip.x0, clip.x1);
       for (const uint32_t node : path) {
         // The node, and the vtable of what it draws (node + 8).
         const uint32_t item = LoadBE32(s.guest_base + node + 8);
@@ -482,15 +461,15 @@ class HudEdges {
       std::fprintf(trace_, "\n");
     }
 
-    // The clip rectangle, or the outermost node on the path placed as one piece; without
-    // either, the last node's quads by line.
-    Box group = clip;
-    float shift = clip_shift;
-    bool whole = clipped;
+    // A strip, or the outermost node on the path placed as one piece; without either, the last
+    // node's quads by line.
+    Box group = kEmpty;
+    float shift = 0;
+    bool whole = false;
     bool placed = false;  // a node placed whole
     // Tiles of a strip scrolled about the middle (GRAW 2's compass, its marks in the texture):
     // two or more quads 400 pixels or wider on one row stay where the game put them.
-    bool strip = !whole && n >= 2;
+    bool strip = n >= 2;
     for (uint32_t q = 0; q < n && strip; ++q) {
       const Box& bx = boxes[q];
       strip = bx.x1 - bx.x0 >= 400 && bx.y0 == boxes[0].y0 && bx.y1 == boxes[0].y1;
@@ -564,9 +543,7 @@ class HudEdges {
     if (moved_.size() > 4096) moved_.clear();
     moved_[base] = {XXH3_64bits(v, bytes), std::move(boxes),
                     placed ? std::optional<Placed>(Placed{group, shift}) : std::nullopt};
-    out.start = base;
-    out.length = bytes;
-    return out;
+    return {base, bytes};
   }
 
   // At the end of a frame, on Apply's thread: its node boxes join the last frames'.
@@ -805,7 +782,6 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   rex::memory::Memory* memory = nullptr;
   const uint8_t* membase = nullptr;
   HudEdges hud_edges;  // RequestVertices' thread (the guest thread in render thread mode)
-  int32_t hud_scissor[2] = {};  // the last RequestVertices' (HudEdges::Moved)
   ShaderCache shaders;
   BoolSpecializer vs_bools{shaders}, ps_bools{shaders};
   bool bool_specialize = REXCVAR_GET(graw_native_bool_specialize);
@@ -2348,10 +2324,8 @@ DxbcShader* DrawRenderer::Impl::LoadShader(ShaderMemo* table, ShaderMemo*& last,
 bool DrawRenderer::Impl::RequestVertices(const DrawState& s, const DxbcShader& vs,
                                          std::vector<VertexCopy>& out) {
   // Before the mirror copies the vertices: the HUD's positions are moved in guest memory.
-  const HudEdges::Moved m = hud_edges.Apply(s, vs, const_cast<uint8_t*>(membase));
-  hud_scissor[0] = m.scissor_x0;
-  hud_scissor[1] = m.scissor_x1;
-  if (m.length && !mirror.RequestRange(m.start, m.length, false, out)) return false;
+  if (const HudEdges::Moved m = hud_edges.Apply(s, vs, const_cast<uint8_t*>(membase)); m.length)
+    if (!mirror.RequestRange(m.start, m.length, false, out)) return false;
   return mirror.RequestVertices(s, vs, out);
 }
 
@@ -2376,10 +2350,7 @@ void DrawRenderer::Impl::Prepare(const DrawState& s, uint64_t tag, DrawPrep* pre
   mirror.preparing = true;
   mirror.segment_conflict = false;
   mirror.draw_reads.clear();
-  hud_scissor[0] = hud_scissor[1] = 0;
   prep->upload_ok = indexed_ok && RequestVertices(s, *static_cast<DxbcShader*>(prep->vs), *out);
-  prep->hud_scissor_x0 = hud_scissor[0];
-  prep->hud_scissor_x1 = hud_scissor[1];
   mirror.preparing = false;
   if (mirror.segment_conflict ||
       mirror.segment_exact.size() >= GuestMemoryMirror::kSegmentExactLimit) {
@@ -3386,7 +3357,6 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
   const bool fan = prim == xenos::PrimitiveType::kTriangleFan;
   if (!prep) {
     mirror.upload_fence = r.frame_fence();
-    hud_scissor[0] = hud_scissor[1] = 0;
     if (!RequestVertices(s, *vs, copies)) {
       // The copies made before the failed range go out: their pages are marked valid already.
       FlushCopies(list);
@@ -3410,12 +3380,6 @@ void DrawRenderer::Impl::Draw(const DrawState& s, const DrawPrep* prep) {
                              LONG(scissor.offset[1] * res_scale),
                              LONG((scissor.offset[0] + scissor.extent[0]) * res_scale),
                              LONG((scissor.offset[1] + scissor.extent[1]) * res_scale)};
-  if (const int32_t x0 = prep ? prep->hud_scissor_x0 : hud_scissor[0],
-      x1 = prep ? prep->hud_scissor_x1 : hud_scissor[1];
-      x0 < x1) {
-    scissor_rect.left = LONG(std::max(x0, 0)) * LONG(res_scale);
-    scissor_rect.right = LONG(x1) * LONG(res_scale);
-  }
 
   // Root state.
   if (list_dirty) {

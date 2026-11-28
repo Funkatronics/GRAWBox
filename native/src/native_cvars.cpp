@@ -69,8 +69,8 @@ REXCVAR_DEFINE_INT32(graw_native_ao, 0, "GRAW native",
                      "Ambient occlusion, its strength in percent (0: none)");
 REXCVAR_DEFINE_STRING(graw_native_hud_layout, "", "GRAW native",
                       "With a wider --graw_native_aspect: edges spreads the HUD over the wide "
-                      "picture, its elements at their own shape; centered keeps it 16:9 in the "
-                      "middle (both as the game hook narrows it; anything else: stretched)");
+                      "picture, its elements at their own shape (anything else leaves it to the "
+                      "game hook: centered or stretched)");
 REXCVAR_DEFINE_STRING(graw_native_hud_trace, "", "GRAW native",
                       "Debug, with --graw_native_hud_layout=edges: writes each frame's HUD quads to "
                       "this file, as the game placed them and as moved (tools/check_hud.py)");
