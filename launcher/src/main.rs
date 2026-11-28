@@ -269,8 +269,8 @@ impl App {
                 row(ui, "Aspect ratio", "Wider pictures for wide screens, with the native renderer.", |ui| {
                     choice(ui, &mut s.aspect_ratio, &[("16:9", "16:9"), ("21:9", "21:9"), ("32:9", "32:9"), ("display", "Display")]);
                 });
-                row(ui, "HUD on wide screens", "Centered keeps menus and HUD 16:9 in the middle; stretched spreads them across.", |ui| {
-                    choice(ui, &mut s.hud_layout, &[("centered", "Centered 16:9"), ("stretched", "Stretched")]);
+                row(ui, "HUD on wide screens", "Edges puts each HUD element at the nearest screen edge at its own shape, menus staying 16:9. Centered keeps everything 16:9 in the middle; stretched spreads it all across.", |ui| {
+                    choice(ui, &mut s.hud_layout, &[("edges", "Edges"), ("centered", "Centered 16:9"), ("stretched", "Stretched")]);
                 });
             });
         });
