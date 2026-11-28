@@ -55,16 +55,6 @@ float LoadFloat(const uint8_t* base, uint32_t address) {
 }
 }  // namespace
 
-// sub_826B4740(node) draws a node of the GUI tree: what it holds (node + 8, through its vtable's
-// fifth entry), then its children. The renderer knows each HUD draw by the nodes it is in.
-REX_EXTERN(__imp__sub_826B4740);
-REX_HOOK_RAW(sub_826B4740) {
-  const uint32_t node = ctx.r3.u32;
-  grawbox::GuiNode(node, true);
-  __imp__sub_826B4740(ctx, base);
-  grawbox::GuiNode(node, false);
-}
-
 REX_EXTERN(__imp__sub_82591FA8);
 REX_HOOK_RAW(sub_82591FA8) {
   // SetVertexShaderConstantF(device, start, data, count) from sub_8237C410: the GUI's map.

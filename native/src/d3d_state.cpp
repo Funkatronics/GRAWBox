@@ -474,7 +474,6 @@ bool GuestStateTracker::ReadDrawState(const uint8_t* base, const HookArgs& a, Dr
   s->fn = a.fn;
   s->device = device;
   s->primitive = a.r[1] & 0x3F;
-  s->guest_base = base;
   s->indexed = false;
   s->index_address = 0;
   s->index_32bit = false;
