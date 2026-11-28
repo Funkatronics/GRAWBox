@@ -54,6 +54,16 @@ REX_HOOK_RAW(sub_8212B298) {
   __imp__sub_8212B298(ctx, base);
 }
 
+// sub_8234F9C8(node) draws a node of the GUI tree: what it holds (node + 8, through its vtable's
+// third entry), then its children. The renderer knows each HUD draw by the nodes it is in.
+REX_EXTERN(__imp__sub_8234F9C8);
+REX_HOOK_RAW(sub_8234F9C8) {
+  const uint32_t node = ctx.r3.u32;
+  grawbox::GuiNode(node, true);
+  __imp__sub_8234F9C8(ctx, base);
+  grawbox::GuiNode(node, false);
+}
+
 REX_EXTERN(__imp__sub_824C87D0);
 REX_HOOK_RAW(sub_824C87D0) {
   // SetVertexShaderConstantF(device, start, data, count) from sub_8216EAA0: the GUI's map.

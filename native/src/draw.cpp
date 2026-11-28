@@ -96,6 +96,8 @@ REXCVAR_DEFINE_INT32(graw_native_draw_log_frames, 1, "GRAW native",
 REXCVAR_DECLARE(int32_t, graw_native_anisotropy);  // native_cvars.cpp, both backends
 REXCVAR_DECLARE(double, graw_native_mip_bias);
 REXCVAR_DECLARE(double, graw_native_aspect);  // native_cvars.cpp
+REXCVAR_DECLARE(std::string, graw_native_hud_layout);
+REXCVAR_DECLARE(std::string, graw_native_hud_trace);
 REXCVAR_DECLARE(std::string, graw_native_capture_dir);
 namespace rex::graphics {
 extern bool g_dxbc_implicit_gradients;  // dxbc_translator_fetch.cpp (local SDK experiment)
@@ -297,6 +299,441 @@ bool OverlayIs16x9(const DrawState& s, float& k) {
   return true;
 }
 
+// The GUI nodes the game is drawing, outermost first (grawbox_native_gui_node), on its drawing
+// thread.
+thread_local std::vector<uint32_t> t_gui_nodes;
+
+static uint32_t LoadBE32(const uint8_t* p) {
+  uint32_t v;
+  std::memcpy(&v, p, 4);
+  return __builtin_bswap32(v);
+}
+
+// The HUD spread over a wide picture (--graw_native_hud_layout=edges). The games draw menus and
+// HUD in 1280x720 pixels through one pixel-to-clip map (c0 = (2k/1280, 0, 0, -k),
+// c1 = (0, -2/720, 0, 1)), which the game hook narrows by k = 16:9 over the aspect so they keep
+// their shape in the middle 16:9.
+//
+// The 16:9 HUD is mapped onto the wide picture across: x goes to 640 + (x - 640) / k. The HUD's
+// big pieces (the frame, its bars with what is drawn on them, overlays) are stretched that way,
+// corner by corner; everything else keeps its shape and has its middle put where the map puts it,
+// so it stays where it was on the pieces around it (GRAW 2's Cross-Com under the bend of the top
+// bar, GRAW 1's within the frame).
+//
+// What moves as one piece comes from the games' GUI trees (an element, its parts, their pieces).
+// The title hook reports the nodes each draw is in (grawbox_native_gui_node), and a draw's quads
+// move with:
+// - the outermost node on its path narrower than 400 pixels (its box over the last frames, so a
+//   pulse or a slide does not change it): an icon, the ring around it and its label move alike;
+//   within a bigger piece placed whole (GRAW 2 draws an element's parts from several nodes), as
+//   that piece;
+// - tiles of a strip scrolled about the middle (GRAW 2's compass, the marks in its texture: two
+//   or more quads 400 pixels or wider on one row in a draw): they stay, so it keeps its span;
+// - under neither (GRAW 2 draws much of its text through one node), the last node's quads by
+//   line: small quads in a row (over the node's quads of the last frame and this one, as a line
+//   can take several draws) move as one line, with the piece placed whole they sit on if any (the
+//   ammo count on its panel); any other quad narrower than 400 pixels and lower than 300 alone,
+//   bigger ones stretched.
+// The positions are moved in guest memory before the mirror copies them: the games write these
+// vertices fresh each frame, and a draw whose bytes are already moved (same hash as after the
+// last move) is left alone.
+class HudEdges {
+ public:
+  // The guest range whose bytes were moved (length 0: none): the caller has the mirror copy it
+  // as it is now, since pages it copied before count as current.
+  struct Moved {
+    uint32_t start = 0, length = 0;
+  };
+
+  Moved Apply(const DrawState& s, const rex::graphics::Shader& vs, uint8_t* membase) {
+    static const float k = [] {
+      const double aspect = REXCVAR_GET(graw_native_aspect);
+      return aspect > 16.0 / 9.0 + 0.01 ? float(16.0 / 9.0 / aspect) : 1.0f;
+    }();
+    static const bool on = REXCVAR_GET(graw_native_hud_layout) == "edges";
+    if (!on || k == 1.0f || s.indexed) return {};
+    // Vertices per element: a quad list's quads, a triangle list's pairs of triangles, a
+    // rectangle list's rectangles; a strip is one element.
+    uint32_t per = 0;
+    switch (xenos::PrimitiveType(s.primitive)) {
+      case xenos::PrimitiveType::kQuadList:
+        per = 4;
+        break;
+      case xenos::PrimitiveType::kTriangleList:
+        per = s.count % 6 == 0 ? 6 : 3;
+        break;
+      case xenos::PrimitiveType::kRectangleList:
+        per = 3;
+        break;
+      case xenos::PrimitiveType::kTriangleStrip:
+        per = s.count;
+        break;
+      default:
+        return {};
+    }
+    if (!per || s.count % per || (s.regs[XE_GPU_REG_RB_SURFACE_INFO] & 0x3FFF) != 1280) return {};
+    const uint32_t* c = &s.regs[XE_GPU_REG_SHADER_CONSTANT_000_X];
+    auto f = [&](uint32_t i) { return std::bit_cast<float>(c[i]); };
+    if (std::fabs(f(0) * 640.0f - k) > 1e-3f || std::fabs(f(3) + k) > 1e-3f || f(1) != 0 ||
+        f(2) != 0 || f(4) != 0 || std::fabs(f(5) * 360.0f + 1.0f) > 1e-3f || f(6) != 0 ||
+        std::fabs(f(7) - 1.0f) > 1e-3f)
+      return {};
+    const auto& regs = *reinterpret_cast<const rex::graphics::RegisterFile*>(s.regs);
+    // The position: the first attribute, at the start of each vertex, as signed 16-bit integers
+    // (two to a big-endian dword, the first component in the low half) or 32-bit floats; the
+    // fetch's swizzle says which components are x and y. The draw's vertices start at the index
+    // offset (the HUD's draws share one buffer).
+    const auto& bindings = vs.vertex_bindings();
+    if (bindings.empty() || bindings[0].attributes.empty()) return {};
+    const auto& b = bindings[0];
+    const auto& fi = b.attributes[0].fetch_instr;
+    const auto& a = fi.attributes;
+    const bool shorts = a.data_format == xenos::VertexFormat::k_16_16_16_16 && a.is_integer &&
+                        a.is_signed;
+    const bool floats = a.data_format == xenos::VertexFormat::k_32_32_FLOAT ||
+                        a.data_format == xenos::VertexFormat::k_32_32_32_FLOAT ||
+                        a.data_format == xenos::VertexFormat::k_32_32_32_32_FLOAT;
+    const uint32_t cx = uint32_t(fi.result.components[0]), cy = uint32_t(fi.result.components[1]);
+    if (!(shorts || floats) || a.offset != 0 || !b.stride_words || cx > 3 || cy > 3) return {};
+    const xenos::xe_gpu_vertex_fetch_t vf = regs.GetVertexFetch(b.fetch_constant);
+    if (vf.type != xenos::FetchConstantType::kVertex ||
+        xenos::Endian(vf.endian) != xenos::Endian::k8in32)
+      return {};
+    const uint32_t stride = b.stride_words * 4;
+    const uint32_t first = s.regs[XE_GPU_REG_VGT_INDX_OFFSET];
+    const uint64_t end = (uint64_t(first) + s.count) * stride;
+    if (end > (uint64_t(vf.size) << 2) || (uint64_t(vf.address) << 2) + end > (uint64_t(512) << 20))
+      return {};
+    const uint32_t base = (vf.address << 2) + first * stride, bytes = s.count * stride;
+    uint8_t* v = membase + base;
+    const std::vector<uint32_t>& path = t_gui_nodes;
+    if (auto it = moved_.find(base);
+        it != moved_.end() && it->second.hash == XXH3_64bits(v, bytes)) {
+      for (const Box& bx : it->second.boxes) Note(path, bx);
+      if (it->second.placed && placed_.size() < kMaxPlaced) placed_.push_back(*it->second.placed);
+      return {base, bytes};
+    }
+
+    // Byte of component c in a vertex: a float's dword, or a short's half of its dword.
+    auto at = [&](uint32_t i, uint32_t comp) {
+      return v + i * stride + (floats ? comp * 4 : (comp / 2) * 4 + (comp & 1 ? 0 : 2));
+    };
+    auto get = [&](uint32_t i, uint32_t comp) -> float {
+      const uint8_t* p = at(i, comp);
+      if (!floats) return float(int16_t(p[0] << 8 | p[1]));
+      return std::bit_cast<float>(uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 |
+                                  uint32_t(p[2]) << 8 | p[3]);
+    };
+    auto put = [&](uint32_t i, uint32_t comp, float value) {
+      uint8_t* p = at(i, comp);
+      if (!floats) {
+        const uint16_t m = uint16_t(int16_t(std::clamp(std::lround(value), -32768L, 32767L)));
+        p[0] = uint8_t(m >> 8);
+        p[1] = uint8_t(m);
+        return;
+      }
+      const uint32_t u = std::bit_cast<uint32_t>(value);
+      p[0] = uint8_t(u >> 24);
+      p[1] = uint8_t(u >> 16);
+      p[2] = uint8_t(u >> 8);
+      p[3] = uint8_t(u);
+    };
+    const uint32_t n = s.count / per;
+    std::vector<Box> boxes(n);
+    for (uint32_t q = 0; q < n; ++q) {
+      Box& bx = boxes[q];
+      bx = kEmpty;
+      for (uint32_t i = q * per; i < q * per + per; ++i) {
+        const float x = get(i, cx), y = get(i, cy);
+        if (!std::isfinite(x) || !std::isfinite(y) || std::fabs(x) > 1e5f || std::fabs(y) > 1e5f)
+          return {};
+        Grow(bx, {int(std::floor(x)), int(std::ceil(x)), int(std::floor(y)), int(std::ceil(y))});
+      }
+      Note(path, bx);
+    }
+    if (trace_ && s.guest_base) {
+      std::fprintf(trace_, "d %llu %08X", (unsigned long long)frame_index_, base);
+      for (const uint32_t node : path) {
+        // The node, and the vtable of what it draws (node + 8).
+        const uint32_t item = LoadBE32(s.guest_base + node + 8);
+        std::fprintf(trace_, " n%08X:%08X", node, item ? LoadBE32(s.guest_base + item) : 0u);
+      }
+      std::fprintf(trace_, "\n");
+    }
+
+    // A strip, or the outermost node on the path placed as one piece; without either, the last
+    // node's quads by line.
+    Box group = kEmpty;
+    float shift = 0;
+    bool whole = false;
+    bool placed = false;  // a node placed whole
+    // Tiles of a strip scrolled about the middle (GRAW 2's compass, its marks in the texture):
+    // two or more quads 400 pixels or wider on one row stay where the game put them.
+    bool strip = n >= 2;
+    for (uint32_t q = 0; q < n && strip; ++q) {
+      const Box& bx = boxes[q];
+      strip = bx.x1 - bx.x0 >= 400 && bx.y0 == boxes[0].y0 && bx.y1 == boxes[0].y1;
+      if (q == 0)
+        group = bx;
+      else
+        Grow(group, bx);
+    }
+    if (strip) {
+      shift = 0;
+      whole = true;
+    }
+    for (size_t i = 0; i < path.size() && !whole; ++i) {
+      const Box nb = NodeOf(path[i]).box;
+      if (Place(nb, k, &shift)) {
+        group = nb;
+        whole = true;
+        // Within a bigger piece (an icon on a panel drawn from another node): as that one.
+        if (const Placed* on = On(nb); on && on->box.x1 - on->box.x0 > nb.x1 - nb.x0) {
+          group = on->box;
+          shift = on->shift;
+        }
+        // Within 3 pixels of its move in the last frame (its box or the piece it is on changed
+        // a little): that move, so it does not twitch.
+        if (auto it = last_node_shifts_.find(path[i]);
+            it != last_node_shifts_.end() && std::fabs(it->second - shift) <= 3.0f)
+          shift = it->second;
+        if (node_shifts_.size() < kMaxNodes) node_shifts_[path[i]] = shift;
+        placed = true;
+        if (placed_.size() < kMaxPlaced) placed_.push_back({group, shift});
+      }
+    }
+    // Lines over the node's quads of the last frame and this one so far (this draw's included),
+    // as a line can take several draws.
+    std::vector<Line> lines;
+    if (!whole) {
+      const uint32_t leaf = path.empty() ? 0u : path.back();
+      std::vector<Box> quads;
+      if (auto it = last_leaf_quads_.find(leaf); it != last_leaf_quads_.end()) quads = it->second;
+      if (auto it = leaf_quads_.find(leaf); it != leaf_quads_.end())
+        quads.insert(quads.end(), it->second.begin(), it->second.end());
+      lines = Lines(quads);
+    }
+    for (uint32_t q = 0; q < n; ++q) {
+      const Box& bx = boxes[q];
+      float qs = shift;
+      Box g = group;
+      bool across = false;
+      if (!whole) {
+        const Line* line = FindLine(lines, bx);
+        g = line ? line->box : bx;
+        if (const Placed* on = On(g)) {
+          g = on->box;  // on a piece placed whole (GRAW 2 draws its text and parts apart)
+          qs = on->shift;
+        } else if (line) {
+          qs = Shift(g, k);  // a line of text, as one
+        } else {
+          across = bx.y1 - bx.y0 >= 300 || !Place(bx, k, &qs);
+        }
+      }
+      for (uint32_t i = q * per; i < q * per + per; ++i) {
+        const float x = get(i, cx);
+        put(i, cx, across ? Wide(x, k) : x + qs);
+      }
+      if (trace_)
+        std::fprintf(trace_, "q %llu %u %d %d %d %d %.1f %d %d %d %d %d\n",
+                     (unsigned long long)frame_index_, q, bx.x0, bx.x1, bx.y0, bx.y1,
+                     across ? Wide(float(bx.x0), k) - bx.x0 : qs, across ? 1 : 0, g.x0, g.x1,
+                     g.y0, g.y1);
+    }
+    if (moved_.size() > 4096) moved_.clear();
+    moved_[base] = {XXH3_64bits(v, bytes), std::move(boxes),
+                    placed ? std::optional<Placed>(Placed{group, shift}) : std::nullopt};
+    return {base, bytes};
+  }
+
+  // At the end of a frame, on Apply's thread: its node boxes join the last frames'.
+  void EndFrame() {
+    ++frame_index_;
+    static const bool tracing = [this] {
+      const std::string path = REXCVAR_GET(graw_native_hud_trace);
+      if (!path.empty()) trace_ = std::fopen(path.c_str(), "w");
+      return trace_ != nullptr;
+    }();
+    if (tracing && (frame_index_ & 63) == 0) std::fflush(trace_);
+    last_leaf_quads_.swap(leaf_quads_);
+    leaf_quads_.clear();
+    last_placed_.swap(placed_);
+    placed_.clear();
+    last_node_shifts_.swap(node_shifts_);
+    node_shifts_.clear();
+    history_.push_back(std::move(frame_));
+    frame_ = {};
+    if (history_.size() > kHistory) history_.pop_front();
+    seen_.clear();
+    for (const auto& f : history_)
+      for (const auto& [node, info] : f) {
+        auto [it, added] = seen_.try_emplace(node, info);
+        if (!added) {
+          Grow(it->second.box, info.box);
+          it->second.quads = std::max(it->second.quads, info.quads);
+        }
+      }
+  }
+
+ private:
+  struct Box {
+    int x0, x1, y0, y1;
+  };
+  struct Node {
+    Box box;    // what it drew
+    int quads;  // in one frame, the most
+  };
+  static constexpr Box kEmpty = {INT32_MAX, INT32_MIN, INT32_MAX, INT32_MIN};
+  // Frames a node's box is gathered over: longer than an element's pulse or slide on a slow
+  // renderer, so its placement holds still.
+  static constexpr size_t kHistory = 64;
+  static constexpr size_t kMaxNodes = 4096;
+  static constexpr size_t kMaxLineQuads = 8192;  // per node and frame
+  static constexpr size_t kMaxPlaced = 1024;     // pieces placed whole, per frame
+
+  struct Line {
+    Box box;
+    int quads;
+  };
+  // Lines of small quads (64 pixels or less: glyphs; not the empty ones of spaces): overlapping
+  // in height by half the shorter one, at most 24 pixels apart. Other quads are in none.
+  static std::vector<Line> Lines(const std::vector<Box>& quads) {
+    auto glyph = [](const Box& b) {
+      return b.x1 > b.x0 && b.y1 > b.y0 && b.x1 - b.x0 <= 64 && b.y1 - b.y0 <= 64;
+    };
+    std::vector<int> parent(quads.size());
+    for (size_t i = 0; i < quads.size(); ++i) parent[i] = int(i);
+    auto root = [&](int i) {
+      while (parent[i] != i) i = parent[i] = parent[parent[i]];
+      return i;
+    };
+    std::vector<int> order;
+    order.reserve(quads.size());
+    for (size_t i = 0; i < quads.size(); ++i)
+      if (glyph(quads[i])) order.push_back(int(i));
+    std::sort(order.begin(), order.end(), [&](int a, int b) { return quads[a].y0 < quads[b].y0; });
+    for (size_t pi = 0; pi < order.size(); ++pi) {
+      const Box& a = quads[order[pi]];
+      for (size_t qi = pi + 1; qi < order.size(); ++qi) {
+        const Box& b = quads[order[qi]];
+        if (b.y0 >= a.y1) break;
+        const int overlap = std::min(a.y1, b.y1) - b.y0;
+        const int gap = std::max(a.x0, b.x0) - std::min(a.x1, b.x1);
+        if (overlap * 2 >= std::min(a.y1 - a.y0, b.y1 - b.y0) && gap <= 24)
+          parent[root(order[pi])] = root(order[qi]);
+      }
+    }
+    std::unordered_map<int, Line> lines;
+    for (const int i : order) {
+      auto [it, added] = lines.try_emplace(root(i), Line{quads[i], 0});
+      Grow(it->second.box, quads[i]);
+      ++it->second.quads;
+    }
+    std::vector<Line> out;
+    out.reserve(lines.size());
+    for (const auto& [r, line] : lines) out.push_back(line);
+    return out;
+  }
+  // The largest line holding `b` (within 2 pixels).
+  static const Line* FindLine(const std::vector<Line>& lines, const Box& b) {
+    const Line* best = nullptr;
+    for (const Line& l : lines) {
+      const Box& c = l.box;
+      if (b.x0 < c.x0 - 2 || b.x1 > c.x1 + 2 || b.y0 < c.y0 - 2 || b.y1 > c.y1 + 2) continue;
+      if (!best || c.x1 - c.x0 > best->box.x1 - best->box.x0) best = &l;
+    }
+    return best;
+  }
+
+  static void Grow(Box& a, const Box& b) {
+    a.x0 = std::min(a.x0, b.x0);
+    a.x1 = std::max(a.x1, b.x1);
+    a.y0 = std::min(a.y0, b.y0);
+    a.y1 = std::max(a.y1, b.y1);
+  }
+
+  // Where x goes on the wide picture.
+  static float Wide(float x, float k) { return 640.0f + (x - 640.0f) / k; }
+  // The move of a piece keeping its shape: its middle goes where the map puts it.
+  static float Shift(const Box& b, float k) {
+    const float middle = 0.5f * float(b.x0 + b.x1);
+    return std::round(Wide(middle, k) - middle);
+  }
+  // Whether `b` moves as one piece (narrower than 400 pixels), and its move.
+  static bool Place(const Box& b, float k, float* shift) {
+    if (b.x0 > b.x1 || b.x1 - b.x0 >= 400) return false;
+    *shift = Shift(b, k);
+    return true;
+  }
+
+  // This frame's quad `b` counts toward each node on `path`.
+  void Note(const std::vector<uint32_t>& path, const Box& b) {
+    const uint32_t leaf = path.empty() ? 0u : path.back();
+    if (b.x1 <= b.x0 || b.y1 <= b.y0) {
+      // Empty (a space): not part of any line.
+    } else if (auto it = leaf_quads_.find(leaf); it != leaf_quads_.end()) {
+      if (it->second.size() < kMaxLineQuads) it->second.push_back(b);
+    } else if (leaf_quads_.size() < kMaxNodes) {
+      leaf_quads_.emplace(leaf, std::vector<Box>{b});
+    }
+    for (const uint32_t node : path) {
+      auto it = frame_.find(node);
+      if (it == frame_.end()) {
+        if (frame_.size() >= kMaxNodes) continue;
+        it = frame_.emplace(node, Node{kEmpty, 0}).first;
+      }
+      Grow(it->second.box, b);
+      ++it->second.quads;
+    }
+  }
+  struct Placed {
+    Box box;
+    float shift;
+  };
+  // The biggest piece placed whole (this frame so far or the last) holding `b`.
+  const Placed* On(const Box& b) const {
+    const Placed* best = nullptr;
+    long best_area = -1;
+    for (const auto* list : {&placed_, &last_placed_})
+      for (const Placed& p : *list) {
+        const Box& c = p.box;
+        if (b.x0 < c.x0 - 2 || b.x1 > c.x1 + 2 || b.y0 < c.y0 - 2 || b.y1 > c.y1 + 2) continue;
+        const long area = long(c.x1 - c.x0) * (c.y1 - c.y0);
+        if (area > best_area) {
+          best = &p;
+          best_area = area;
+        }
+      }
+    return best;
+  }
+  // A node over the last frames and this one so far.
+  Node NodeOf(uint32_t node) const {
+    Node out{kEmpty, 0};
+    if (auto it = seen_.find(node); it != seen_.end()) out = it->second;
+    if (auto it = frame_.find(node); it != frame_.end()) {
+      Grow(out.box, it->second.box);
+      out.quads = std::max(out.quads, it->second.quads);
+    }
+    return out;
+  }
+
+  struct Done {
+    uint64_t hash;                  // of the bytes after the move
+    std::vector<Box> boxes;         // the quads before it
+    std::optional<Placed> placed;   // the node placed whole it moved with
+  };
+  std::unordered_map<uint32_t, Done> moved_;  // by vertex address
+  std::unordered_map<uint32_t, Node> frame_;  // this frame's nodes
+  std::deque<std::unordered_map<uint32_t, Node>> history_;  // the last frames'
+  std::unordered_map<uint32_t, Node> seen_;   // all of them
+  std::unordered_map<uint32_t, std::vector<Box>> leaf_quads_;  // this frame's, by last node
+  std::unordered_map<uint32_t, std::vector<Box>> last_leaf_quads_;  // the last frame's
+  std::vector<Placed> placed_, last_placed_;  // pieces placed whole, this frame and the last
+  std::unordered_map<uint32_t, float> node_shifts_, last_node_shifts_;  // their nodes' moves
+  uint64_t frame_index_ = 0;
+  std::FILE* trace_ = nullptr;  // --graw_native_hud_trace
+};
+
 bool IsHazeShader(uint64_t ucode_hash) {
   return ucode_hash == 0xCFC1BD3557C8B735ull ||  // GRAW 1
          ucode_hash == 0xF17045F9B4E36E54ull;   // GRAW 2
@@ -344,6 +781,7 @@ struct DrawRenderer::Impl : GuestMemoryMirror::Sink {
   ID3D12Device* device = nullptr;
   rex::memory::Memory* memory = nullptr;
   const uint8_t* membase = nullptr;
+  HudEdges hud_edges;  // RequestVertices' thread (the guest thread in render thread mode)
   ShaderCache shaders;
   BoolSpecializer vs_bools{shaders}, ps_bools{shaders};
   bool bool_specialize = REXCVAR_GET(graw_native_bool_specialize);
@@ -1885,6 +2323,9 @@ DxbcShader* DrawRenderer::Impl::LoadShader(ShaderMemo* table, ShaderMemo*& last,
 // WriteFanIndices reads them from guest memory.
 bool DrawRenderer::Impl::RequestVertices(const DrawState& s, const DxbcShader& vs,
                                          std::vector<VertexCopy>& out) {
+  // Before the mirror copies the vertices: the HUD's positions are moved in guest memory.
+  if (const HudEdges::Moved m = hud_edges.Apply(s, vs, const_cast<uint8_t*>(membase)); m.length)
+    if (!mirror.RequestRange(m.start, m.length, false, out)) return false;
   return mirror.RequestVertices(s, vs, out);
 }
 
@@ -3162,6 +3603,7 @@ void DrawRenderer::BeginCopySegment() { impl_->mirror.NewSegment(); }
 DrawRenderer::PrepareCounters DrawRenderer::EndFramePrepare(uint64_t done) {
   Impl& m = *impl_;
   PrepareCounters c;
+  m.hud_edges.EndFrame();
   if (m.mirror.coherency) {
     m.mirror.CheckLateWrites();
     c.stale_pages = std::exchange(m.mirror.coherency->stale, 0);
@@ -3315,7 +3757,10 @@ void DrawRenderer::EndFrame(uint64_t completed_fence) {
     }
     if ((impl_->mirror.trace.frame & 255) == 0) impl_->mirror.trace.Flush();
   }
-  if (!impl_->threaded) impl_->vertex_upload.EndFrame(completed_fence);
+  if (!impl_->threaded) {
+    impl_->vertex_upload.EndFrame(completed_fence);
+    impl_->hud_edges.EndFrame();
+  }
   impl_->constant_upload.EndFrame(completed_fence);
   if (!impl_->coherency_inflight.empty()) impl_->CheckCoherencyJobs(completed_fence);
   if (!impl_->audit_inflight.empty()) impl_->CheckAuditJobs(completed_fence);
@@ -3404,3 +3849,19 @@ void DrawRenderer::EndFrame(uint64_t completed_fence) {
 }
 
 }  // namespace graw::native
+
+GRAWBOX_NATIVE_API void grawbox_native_gui_node(uint32_t node, bool enter) {
+  // Nodes past 64 deep are left off the path; `deeper` counts them so leaving one pops nothing.
+  thread_local uint32_t deeper = 0;
+  auto& nodes = graw::native::t_gui_nodes;
+  if (enter) {
+    if (nodes.size() < 64)
+      nodes.push_back(node);
+    else
+      ++deeper;
+  } else if (deeper) {
+    --deeper;
+  } else if (!nodes.empty()) {
+    nodes.pop_back();
+  }
+}

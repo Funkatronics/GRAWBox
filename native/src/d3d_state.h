@@ -72,6 +72,9 @@ struct DrawState {
   uint32_t inline_vertices = 0;  // physical, 0 if none
 
   ShaderRef vs, ps;
+  // The guest's memory by virtual address, for reading the GUI nodes the HUD trace names
+  // (draw.cpp).
+  const uint8_t* guest_base = nullptr;
 };
 
 // One register value, for the render thread's copy of the register file (renderer.h).
