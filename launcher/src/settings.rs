@@ -71,7 +71,7 @@ impl Default for Settings {
             prepare_shaders: true,
             field_of_view: 100,
             aspect_ratio: "16:9".into(),
-            hud_layout: "centered".into(),
+            hud_layout: "edges".into(),
             anisotropy: 16,
             ambient_occlusion: 0,
             sharpness: 0.0,
@@ -162,7 +162,7 @@ impl Settings {
         if !["16:9", "21:9", "32:9", "display"].contains(&&s.aspect_ratio[..]) {
             s.aspect_ratio = d.aspect_ratio.clone();
         }
-        if !["centered", "stretched"].contains(&&s.hud_layout[..]) {
+        if !["edges", "centered", "stretched"].contains(&&s.hud_layout[..]) {
             s.hud_layout = d.hud_layout.clone();
         }
         if !["auto", "controller", "keyboard"].contains(&&s.prompts[..]) {
